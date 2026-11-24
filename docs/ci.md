@@ -4,15 +4,17 @@ Three parts: how to run xcmutate in the CI of your project, what to choose for a
 
 ## What has been verified
 
-**The action has run once on a GitHub-hosted macOS runner: it built the tool from source and ran it on a Swift package on macOS. An iOS simulator and the download of the release binary have not been tried on GitHub.** The examples below name the tag `v0.13.0`, which does not exist until the first release.
+**The action has run twice on a GitHub-hosted macOS runner: it built the tool from source and ran it on a Swift package on macOS. An iOS simulator and the download of the release binary have not been tried on GitHub.**
 
-The one run, on 2026-11-23, used `macos-latest` (image `macos-26-arm64`, Xcode 26.6, Swift 6.3.3) and the workflow `.github/workflows/smoke.yml`:
+Both runs used `macos-latest` (image `macos-26-arm64`, Xcode 26.6, Swift 6.3.3) and the workflow `.github/workflows/smoke.yml`. The first, on 2026-11-23:
 
 - The action built the tool from the checked-out source. The step took 4 min 52 s, about 4 min 15 s of it for the build.
 - The tool ran on `Fixtures/LogicKit` (macOS, `--shared-process`, 23 mutants) and gave the same verdicts as with Xcode 27.2 on a Mac: Killed 18, Survived 5, no warning, exit code 0. The baseline took 4.3 s and the mutants about 11 s.
 - The inputs, the outputs (`exit-code`, `score`, `undetected`, `report`), the warning annotations for the five survivors and the upload of the artifact worked. The whole job took about 5 minutes.
 
-So expect about 4 minutes for a build from source, and about 30 seconds for the run on a small package (build of the package and baseline included). Downloading a release binary would save the 4 minutes; that path has not been tried.
+The second, on 2026-11-24, in this repository: the same verdicts (Killed 18, Survived 5, Ignored 1, no warning). The build from source took 9 min 21 s this time, and the whole job 10 min 45 s.
+
+So expect 4 to 10 minutes for a build from source, and about 30 seconds for the run on a small package (build of the package and baseline included). Downloading a release binary would save the 4 minutes; that path has not been tried.
 
 Not tried on GitHub: an iOS simulator, the release binary, the cache, `pull_request` events, how the warnings appear on the lines of a pull request, and the example workflows. For those, this is what was checked on a Mac:
 

@@ -4,9 +4,9 @@ Notable changes to xcmutate. The format follows [Keep a Changelog](https://keepa
 
 <!-- Releasing: replace "Unreleased" in the heading of the version being released with the date of the tag (YYYY-MM-DD). New work goes into a "## [Unreleased]" section above the latest version. -->
 
-## [0.13.0] - Unreleased
+## [0.13.0] - 2026-11-24
 
-The first public version. It has not been tagged yet.
+The first public version.
 
 ### What it does
 
