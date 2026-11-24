@@ -198,7 +198,7 @@ What the measurements in [speed.md](speed.md) say for an app whose unit tests ta
 
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds the tool and runs its unit tests (`swift build`, `swift test`) on a macOS runner. The unit tests need no simulator. [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the release archive for a tag ([install.md](install.md)). [`.github/workflows/smoke.yml`](../.github/workflows/smoke.yml), also started by hand, runs the action once on the smallest fixture package and compares the verdicts with the expected ones. Its purpose is to show whether a run works with the Xcode of the runner image. It has been run once and passed (above).
 
-`ci.yml` runs on pushes to `main`, on pull requests, and when started by hand (`workflow_dispatch`): the "Run workflow" button on the Actions tab, or `gh workflow run ci.yml`. Pushes run it only in `RyoHirota68/xcmutate`, not in forks. `release.yml` starts when a tag `v<version>` is pushed.
+`ci.yml` runs on pushes to `main`, on pull requests, and when started by hand (`workflow_dispatch`): the "Run workflow" button on the Actions tab, or `gh workflow run ci.yml`. Pushes run it only in `RyoHirota68/xcmutate`, not in forks. `release.yml` starts when a tag `v<version>` is pushed. For `v0.13.0` it ran on 2026-11-24 on the standard image (Xcode 26.6): the unit tests, the universal archive and its checks, and the release, in 19 minutes.
 
 `Package.swift` declares Swift tools version 6.3. On 2026-11-24 the workflow passed on GitHub's standard macOS image (`macos-26-arm64`, Xcode 26.6, Swift 6.3.3): `swift build` and 332 tests. The runner label and the Xcode version are inputs, so that they can be changed without editing the workflow:
 

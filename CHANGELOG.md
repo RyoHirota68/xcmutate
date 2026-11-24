@@ -24,9 +24,9 @@ The first public version.
 
 ### Known limits
 
-- Runs were verified with Xcode 27.2 (macOS and an iOS simulator) and, once, with Xcode 26.6 (a Swift package on macOS). Building from source needs Swift 6.3 or newer (checked with Xcode 26.6 and 27.2).
+- Runs were verified with Xcode 27.2 (macOS and an iOS simulator) and with Xcode 26.6 (a Swift package on macOS). The prebuilt binary is built with Xcode 26.6 and was checked under both. Building from source needs Swift 6.3 or newer (checked with Xcode 26.6 and 27.2).
 - UI tests are not supported.
 - By default every mutant costs one launch of the test host. The faster modes are opt-in.
-- Not tested: an iOS simulator with Xcode 26.6, the prebuilt binary with Xcode 26, the x86_64 half of the release binary, `brew install`, and most of the action on GitHub (it ran once there, on a Swift package on macOS).
+- Not tested: an iOS simulator with Xcode 26.6, the x86_64 half of the release binary on a project (it was only started under Rosetta), and most of the action on GitHub (it ran there on a Swift package on macOS).
 
 [docs/limitations.md](docs/limitations.md) lists all limitations, what is not verified yet, and the known issues.

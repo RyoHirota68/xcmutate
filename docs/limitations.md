@@ -18,18 +18,16 @@ This page collects in one place what the tool does not do, what has not been tri
 
 Toolchains and platforms:
 
-- Runs were verified with Xcode 27.2 (macOS and an iOS simulator) and, once, with Xcode 26.6 (a Swift package on macOS, on a GitHub-hosted runner, with the tool built by that Xcode). [install.md](install.md#what-you-need) has the details.
+- Runs were verified with Xcode 27.2 (macOS and an iOS simulator) and with Xcode 26.6 (a Swift package on macOS, on GitHub-hosted runners). The prebuilt binary is built with Xcode 26.6 and was checked under both. [install.md](install.md#what-you-need) has the details.
 - An iOS simulator with Xcode 26.6 has not been tried.
-- The prebuilt binary, which is built with Xcode 27.2, has not been used with Xcode 26.
 - Xcode versions older than 26.6 have not been tried.
 - macOS versions other than 26 and 27 have not been tried. `Package.swift` declares macOS 14 as the minimum.
-- The x86_64 (Intel) half of the universal release binary has not been tested.
+- The x86_64 (Intel) half of the universal release binary has only been started under Rosetta (`--version`). It has not run on a project.
 - Physical devices, and watchOS, tvOS and visionOS destinations, have not been tried.
 
 Distribution and CI:
 
-- `brew install` has not been run. The formula was generated and inspected only ([install.md](install.md#homebrew)).
-- Most of the GitHub Action. It ran once on a GitHub-hosted macOS runner (Xcode 26.6): it built the tool from source and ran it on a Swift package on macOS. Not tried on GitHub: an iOS simulator, downloading the release binary, the cache, `pull_request` events, how warnings appear on the lines of a pull request, and the example workflows ([ci.md](ci.md#what-has-been-verified)).
+- Most of the GitHub Action. It ran twice on a GitHub-hosted macOS runner (Xcode 26.6): it built the tool from source and ran it on a Swift package on macOS. Not tried on GitHub: an iOS simulator, downloading the release binary, the cache, `pull_request` events, how warnings appear on the lines of a pull request, and the example workflows ([ci.md](ci.md#what-has-been-verified)).
 
 Speed:
 
