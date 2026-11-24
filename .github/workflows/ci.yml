@@ -1,27 +1,10 @@
-# Builds the tool and runs its unit tests on a macOS runner.
-#
-# This workflow only runs when started by hand ("Run workflow" on the Actions tab, or
-# `gh workflow run ci.yml`). Nothing here starts on its own until a manual run has passed
-# on GitHub (see below).
-#
-# Once a manual run has passed, enable automatic runs by replacing the `on:` block with:
-#
-#   on:
-#     workflow_dispatch:
-#       inputs: (keep as below)
-#     push:
-#       branches: [main]
-#     pull_request:
+# Builds the tool and runs its unit tests on a macOS runner: on pushes to main, on pull requests,
+# and when started by hand ("Run workflow" on the Actions tab, or `gh workflow run ci.yml`).
 #
 # The `inputs` are empty for push and pull_request events; the expressions below fall
 # back to the repository variables CI_RUNNER / CI_XCODE (Settings → Secrets and variables →
-# Actions → Variables) and then to the defaults.
-#
-# NOT VERIFIED: this workflow has not completed on a GitHub runner yet. Package.swift needs
-# Swift tools 6.3. `swift build` and `swift test` pass with Xcode 26.6 (Swift 6.3.3) and with
-# Xcode 27.2 on a Mac, and the tool was built once on GitHub's standard macOS image (Xcode 26.6,
-# by smoke.yml), so that image should do. If the runner's Swift is older, choose a runner label and an Xcode path that
-# provide Swift 6.3 or newer and set the two values accordingly. See docs/ci.md.
+# Actions → Variables) and then to the defaults. Package.swift needs Swift tools 6.3; the
+# standard macOS image (Xcode 26.6, Swift 6.3.3) has it. See docs/ci.md.
 name: CI
 
 on:
@@ -35,6 +18,9 @@ on:
         description: "Xcode version to select, e.g. 27.2 (empty: the runner's default)"
         required: false
         default: ""
+  push:
+    branches: [main]
+  pull_request:
 
 permissions:
   contents: read
@@ -45,6 +31,8 @@ concurrency:
 
 jobs:
   unit-tests:
+    # Pushes run the tests only in RyoHirota68/xcmutate, not in copies of it; a run started by hand runs anywhere
+    if: github.event_name != 'push' || github.repository == 'RyoHirota68/xcmutate'
     runs-on: ${{ inputs.runner || vars.CI_RUNNER || 'macos-latest' }}
     timeout-minutes: 30
     env:

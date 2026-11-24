@@ -196,32 +196,16 @@ What the measurements in [speed.md](speed.md) say for an app whose unit tests ta
 
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds the tool and runs its unit tests (`swift build`, `swift test`) on a macOS runner. The unit tests need no simulator. [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the release archive for a tag ([install.md](install.md)). [`.github/workflows/smoke.yml`](../.github/workflows/smoke.yml), also started by hand, runs the action once on the smallest fixture package and compares the verdicts with the expected ones. Its purpose is to show whether a run works with the Xcode of the runner image. It has been run once and passed (above).
 
-`ci.yml` runs only when started by hand (`workflow_dispatch`): the "Run workflow" button on the Actions tab, or `gh workflow run ci.yml`. It does not start on pushes yet, because it has not passed on GitHub since the package was changed to build with Swift 6.3. `release.yml` starts when a tag `v<version>` is pushed.
+`ci.yml` runs on pushes to `main`, on pull requests, and when started by hand (`workflow_dispatch`): the "Run workflow" button on the Actions tab, or `gh workflow run ci.yml`. Pushes run it only in `RyoHirota68/xcmutate`, not in forks. `release.yml` starts when a tag `v<version>` is pushed.
 
-Neither has completed on a GitHub runner yet. `Package.swift` declares Swift tools version 6.3. GitHub's standard macOS image had Xcode 26.6 (Swift 6.3.3) when this was written. The tool builds on that image (the smoke workflow did it once), and `swift test` passes with that Xcode on a Mac, so `ci.yml` should pass. That has not been confirmed: `ci.yml` was started there twice while the package still needed Swift 6.4, and stopped at the build. The runner label and the Xcode version are inputs, so that they can be changed without editing the workflow:
+`Package.swift` declares Swift tools version 6.3. On 2026-11-24 the workflow passed on GitHub's standard macOS image (`macos-26-arm64`, Xcode 26.6, Swift 6.3.3): `swift build` and 332 tests. The runner label and the Xcode version are inputs, so that they can be changed without editing the workflow:
 
 | Input | Repository variable (used when the input is empty) | Default |
 |-------|----------------------------------------------------|---------|
 | `runner` | `CI_RUNNER` | `macos-latest` |
 | `xcode` (selects `/Applications/Xcode_<value>.app`) | `CI_XCODE` | the runner's default Xcode |
 
-Read the "Show toolchain" step of a run. If Swift is older than 6.3, pick a runner image and Xcode version that has it and set the two repository variables.
-
-### Enabling it for pushes and pull requests
-
-Once a manual run has passed, replace the `on:` block of `ci.yml`:
-
-```yaml
-on:
-  workflow_dispatch:
-    inputs:
-      # keep the two inputs
-  push:
-    branches: [main]
-  pull_request:
-```
-
-For `push` and `pull_request` the inputs are empty and the workflow uses the repository variables, then the defaults.
+Read the "Show toolchain" step of a run. If a later image has a Swift older than 6.3, pick a runner image and Xcode version that has it and set the two repository variables. For `push` and `pull_request` the inputs are empty and the workflow uses the repository variables, then the defaults.
 
 ### What is not in CI
 
