@@ -36,7 +36,9 @@ class Xcmutate < Formula
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/xcmutate --version")
+    # A HEAD build prints the version of its sources, not "HEAD-<commit>"
+    expected = version.head? ? /^\d+\.\d+\.\d+$/ : version.to_s
+    assert_match expected, shell_output("#{bin}/xcmutate --version")
     (testpath/"A.swift").write <<~SWIFT
       func isAdult(_ age: Int) -> Bool { age >= 18 }
     SWIFT
