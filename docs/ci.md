@@ -4,7 +4,7 @@ Three parts: how to run xcmutate in the CI of your project, what to choose for a
 
 ## What has been verified
 
-**The action has run twice on a GitHub-hosted macOS runner: it built the tool from source and ran it on a Swift package on macOS. An iOS simulator and the download of the release binary have not been tried on GitHub.**
+**The action has run on GitHub-hosted macOS runners with a Swift package on macOS and with an iOS app on a simulator, from the sources and from the release binary, on `workflow_dispatch` and on a pull request.** What has not been tried on GitHub is listed at the end of this section.
 
 Both runs used `macos-latest` (image `macos-26-arm64`, Xcode 26.6, Swift 6.3.3) and the workflow `.github/workflows/smoke.yml`. The first, on 2026-11-23:
 
@@ -14,15 +14,25 @@ Both runs used `macos-latest` (image `macos-26-arm64`, Xcode 26.6, Swift 6.3.3) 
 
 The second, on 2026-11-24, in this repository: the same verdicts (Killed 18, Survived 5, Ignored 1, no warning). The build from source took 9 min 21 s this time, and the whole job 10 min 45 s.
 
-So expect 4 to 10 minutes for a build from source, and about 30 seconds for the run on a small package (build of the package and baseline included). Downloading a release binary would save the 4 minutes; that path has not been tried.
+So expect 4 to 10 minutes for a build from source, and about 30 seconds for the run on a small package (build of the package and baseline included).
 
-Not tried on GitHub: an iOS simulator, the release binary, the cache, `pull_request` events, how the warnings appear on the lines of a pull request, and the example workflows. For those, this is what was checked on a Mac:
+On 2026-11-24 the action was also run with `uses: RyoHirota68/xcmutate@v0.13.0` in a separate public repository, [xcmutate-action-test](https://github.com/RyoHirota68/xcmutate-action-test) (`macos-latest`, the same image, Xcode 26.6). It holds a Swift package and an iOS app with app-hosted unit tests:
+
+- **The release binary.** The first run of each workflow downloaded the release archive (`Cache not found` → `downloading …/v0.13.0/xcmutate-0.13.0-macos-universal.tar.gz`); the next run restored it from the cache (`Cache hit for: xcmutate-tool-macOS-ARM64-release-0.13.0`). Nothing was built.
+- **A Swift package on macOS** (`package`, `scheme`, `destination: platform=macOS`): the whole job took 1 min 35 s.
+- **An iOS simulator.** `destination: platform=iOS Simulator,name=iPhone 17 Pro`: the action found the device by name, booted it, granted `photos` to the app (`simulator-permissions`) and passed `id=<UDID>` to the tool. Booting took about 2 min 45 s; the whole job 10 min 18 s (5 mutants, 35 s each, the build 69 s, the baseline 135 s).
+- **A pull request.** `since` defaulted to the base branch (`--since origin/main`, scope `diff`). The warnings were placed on the changed line of the pull request (the check runs carry them as annotations on `Shop/Sources/Shop/Price.swift` line 11). The reports were uploaded as the artifact (`mutation.json`, `mutation.md`, `mutation.html`), and the job summary was written from `mutation.md`.
+- **A gate.** With `fail-on-survived: true` the step failed with exit code 3 and the output `exit-code` was `3`; the message points to the job summary.
+
+Note that `--root` defaults to the top of the git repository also with `package:` in a subdirectory: on `workflow_dispatch` (whole files) the run on the package also mutated the Swift files of the app next to it, which the package's tests do not reach (NotReached). Name the files with `files`, or give `--root` in `args`, when a repository holds more than one project.
+
+Not tried on GitHub: `baseline-report` (and the nightly workflow that makes the baseline), `package-cache`, `select-tests` and `shared-process` on a simulator, and the example workflows as they are written. How the job summary and the warnings look in the browser was not looked at. For the rest, this is what was checked on a Mac:
 
 | | Checked | Not checked |
 |---|---|---|
-| The action's steps (`action/*.sh`) | Run with the environment variables that GitHub sets, against a package on macOS: `scripts/verify-action.sh` (installation from the sources, the pull-request default of `--since`, the job summary, the annotations, the outputs, the exit codes); the simulator step alone, with a simulator given by id and by name | The expressions in `action.yml`; `actions/cache` and `actions/upload-artifact`; installation from a release; a simulator destination on a hosted runner; how GitHub shows the annotations |
+| The action's steps (`action/*.sh`) | Run with the environment variables that GitHub sets, against a package on macOS: `scripts/verify-action.sh` (installation from the sources, the pull-request default of `--since`, the job summary, the annotations, the outputs, the exit codes); the simulator step alone, with a simulator given by id and by name | Checked on GitHub since (above) |
 | The workflows in `examples/workflows/` and `.github/workflows/` | `actionlint` 1.7.12 (without its shellcheck pass, which did not finish here): no findings. `action.yml`: parsed as YAML | Everything else. `actionlint` does not read `action.yml` or check the inputs passed to the action |
-| `--reporter github` | Unit tests of the output (format, escaping, the limit of ten) | That GitHub places the warnings on the lines of a pull request |
+| `--reporter github` | Unit tests of the output (format, escaping, the limit of ten); on GitHub, the warnings on the lines of a pull request (above) | nothing |
 | `--max-mutants`, `--time-limit` | Unit tests; runs on macOS | nothing |
 
 Treat the workflows as a starting point and read the log of the first run. This section is updated as parts are verified on GitHub.

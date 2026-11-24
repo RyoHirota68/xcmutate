@@ -19,7 +19,7 @@ This installs the prebuilt executable of the latest release. Nothing is compiled
 To use the tool (any way of installing):
 
 - macOS with Xcode: the full application, selected with `xcode-select`. The Command Line Tools alone are not enough, because the tool calls `xcodebuild`, `xcrun simctl` and `swiftc`.
-- Runs were verified with Xcode 27.2 (macOS and an iOS simulator) and with Xcode 26.6 (a Swift package on macOS, on GitHub-hosted runners). The prebuilt binary is built with Xcode 26.6; it was checked under Xcode 27.2 (the regression checks on macOS) and under Xcode 26.6 (a Swift package on macOS). Not tested: an iOS simulator with Xcode 26.6.
+- Runs were verified with Xcode 27.2 (macOS and an iOS simulator) and with Xcode 26.6 (a Swift package on macOS, and a small iOS app on a simulator, on GitHub-hosted runners). The prebuilt binary is built with Xcode 26.6; it was checked under Xcode 27.2 (the regression checks on macOS) and under Xcode 26.6 (on GitHub).
 - `Package.swift` declares macOS 14 as the minimum platform. Only macOS 26 and 27 were tried.
 - The project under test in a git repository. Outside one, `run` needs the Swift files named as arguments, and `--since` cannot be used.
 

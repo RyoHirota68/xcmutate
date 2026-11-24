@@ -1,7 +1,6 @@
 # Mutation testing of a Swift package on macOS (no simulator): the lines a pull request changes.
 #
-# NOT VERIFIED ON GITHUB: this workflow has not been run by a GitHub runner. The action it uses ran there once,
-# on a Swift package on macOS (docs/ci.md).
+# Checked on GitHub with a workflow of the same shape, on a Swift package and a pull request (docs/ci.md).
 name: Mutation testing (Swift package)
 
 on: pull_request

@@ -1,8 +1,7 @@
 # Mutation testing of whole files on the main branch, every night. Its JSON report is the baseline that the
 # pull-request workflow compares with (docs/ci.md).
 #
-# NOT VERIFIED ON GITHUB: this workflow has not been run by a GitHub runner. The action it uses ran there once,
-# on a Swift package on macOS (docs/ci.md).
+# Not run on GitHub as written. The action itself ran there with a Swift package and an iOS app (docs/ci.md).
 name: Mutation testing (nightly)
 
 on:

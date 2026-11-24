@@ -2,8 +2,8 @@
 # no test detects and that the main branch did not already have (docs/ci.md).
 #
 # Copy to .github/workflows/ of your project and replace the workspace, the scheme and the device name.
-# NOT VERIFIED ON GITHUB: this workflow has not been run by a GitHub runner. The action it uses ran there once,
-# on a Swift package on macOS (docs/ci.md).
+# Not run on GitHub as written: the baseline download and `package-cache` have not been tried there. The action
+# itself ran on GitHub with an iOS app on a simulator and on a pull request (docs/ci.md).
 name: Mutation testing (pull request)
 
 on: pull_request
