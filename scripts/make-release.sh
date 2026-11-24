@@ -75,8 +75,10 @@ CHECK="the executable does not hold the path of this checkout, the home director
 check bash -c "! LC_ALL=C grep -a -c -F -e '$REPO' -e '$HOME' -e '/Users/$(id -un)' '$TOOL' | grep -v '^0\$'"
 CHECK="the executable is stripped of local symbols (no symbol with a source file name)"
 check bash -c "! nm -a '$TOOL' 2>/dev/null | grep -E ' (SO|OSO) ' | head -3 | grep ."
-CHECK="the entries of the archive belong to root/wheel and the archive does not hold the user name or extended attributes"
-check bash -c "! tar -tvzf '$OUT/$NAME.tar.gz' | awk '{print \$3, \$4}' | grep -v '^root wheel\$' | grep . && ! gunzip -c '$OUT/$NAME.tar.gz' | LC_ALL=C grep -a -c -F -e '$(id -un)' -e 'SCHILY.xattr' -e 'LIBARCHIVE.xattr' | grep -v '^0\$'"
+# The user's home path, not the bare user name: on GitHub's runners the user is `runner`, a word that the
+# executable holds in identifiers such as `runnerError`. The owner fields are checked by the first half
+CHECK="the entries of the archive belong to root/wheel and the archive does not hold the home path of the user or extended attributes"
+check bash -c "! tar -tvzf '$OUT/$NAME.tar.gz' | awk '{print \$3, \$4}' | grep -v '^root wheel\$' | grep . && ! gunzip -c '$OUT/$NAME.tar.gz' | LC_ALL=C grep -a -c -F -e '/Users/$(id -un)' -e 'SCHILY.xattr' -e 'LIBARCHIVE.xattr' | grep -v '^0\$'"
 CHECK="the executable links only against system libraries"
 check bash -c "! otool -L '$TOOL' | grep -v -e '^[[:space:]]*/usr/lib/' -e '^[[:space:]]*/System/Library/' -e ':\$' | grep ."
 
