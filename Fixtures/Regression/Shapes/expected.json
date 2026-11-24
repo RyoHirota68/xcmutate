@@ -1,0 +1,33 @@
+{
+  "comment": "Code that was once dropped from the run or could not be run: a function that ends with a call to a -> Never function of another file, bodies that are one switch / if expression, a ternary whose branches only the return type unifies, product code with `import XCTest` in a string, a branch of #if that is not compiled on macOS, a file with CRLF line endings. Nothing is a CompileError and nothing is NotReached. In classify, a condition turned false lets the function run into the call that does not return (Crash), and `n > 0` -> `n >= 0` is equivalent (0 has returned before): the one survivor.",
+  "statuses": {
+    "classify(_:)::condition-constant": [
+      "Crash",
+      "Crash",
+      "Crash"
+    ],
+    "classify(_:)::boundary": [
+      "Killed",
+      "Survived"
+    ],
+    "classify(_:)::equality-flip": "Crash",
+    "classify(_:)::return-value": "Killed",
+    "screenScale(_:)::return-value": "Killed",
+    "testFileTemplate(module:cases:)::boundary": "Killed",
+    "testFileTemplate(module:cases:)::ternary-swap": "Killed",
+    "testFileTemplate(module:cases:)::return-value": "Killed",
+    "Tab.text(_:)::return-value": "Killed",
+    "Tab.title::switch-case-removal": "Killed",
+    "Tab.subtitle::condition-constant": "Killed",
+    "Tab.subtitle::equality-flip": "Killed",
+    "shape(round:)::ternary-swap": "Killed",
+    "inRange(_:_:)::operand-removal": "Killed",
+    "inRange(_:_:)::boundary": "Killed",
+    "inRange(_:_:)::logical-connector": "Killed"
+  },
+  "noWarnings": [
+    "skippedFile",
+    "excludedTestCode",
+    "stateLeak"
+  ]
+}

@@ -1,0 +1,3956 @@
+{
+  "schemaVersion": 1,
+  "description": "xcmutate の検証用プロジェクトの期待結果。各ソースの行末の `// @case <marker>` で行を特定し、その行のミュータントを operator・original・occurrence（同じ行に同じ演算子が複数あるときの順番。1 始まり、位置の順）で特定する。",
+  "outcomes": {
+    "Killed": "テストが検出する（killKind: crash はクラッシュで検出）",
+    "Survived": "テストが検出しない（意図的なテストの穴・等価ミュータント・テストの無い画面）",
+    "Timeout": "テストが終わらなくなり、タイムアウトで止まる",
+    "NotReached": "どのテストからも実行されない（Survived と区別して報告されること）",
+    "Ignored": "ミュータントを作らない（reason は MutatorCore の IgnoreReason の値）",
+    "CompileError": "コンパイルできないので外す（スコアに含めない）"
+  },
+  "killKind": "crash のものは Crash（クラッシュによる検出）として記録される",
+  "sourceRoots": [
+    "SampleApp",
+    "Packages/SampleKit/Sources",
+    "LegacyKit"
+  ],
+  "global": {
+    "compileErrors": 2,
+    "phantoms": 0,
+    "note": "全ケース共通: ファントムが 0 件（自己検査が通る）。CompileError は X10 と CA3-variable の2件だけ（意図的なケース）。1回のビルドで両方のエラーを集めるので、ビルドは2回（buildCount）",
+    "buildCount": 2,
+    "excludedFiles": {
+      "SampleApp/Generated/GeneratedStrings.swift": "generated-code",
+      "SampleApp/Excluded/Vendor.swift": "config-exclude",
+      "SampleAppTests/TestHelpers.swift": "test-directory",
+      "Packages/SampleKit/Package.swift": "package-manifest"
+    },
+    "excludedNote": "7.12 X11〜X14: 対象から外すファイルと理由（テストのフレームワークを import するファイル = test-code は載せない）。名前が Test.swift で終わる製品コード（ABTest.swift）と、exclude の ! で戻したファイル（Kept.swift）は対象になる",
+    "warningKinds": [
+      "disableComment"
+    ],
+    "warningNote": "DC2: 無効化コメントの知らない演算子名は警告になる"
+  },
+  "cases": [
+    {
+      "id": "N1",
+      "section": "7.1",
+      "title": "関数本体の直下の if a > b",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N1",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N2",
+      "section": "7.1",
+      "title": "外側の文と内側のクロージャの両方に比較",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N2-outer",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N2-inner",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N3",
+      "section": "7.1",
+      "title": "sorted / removeAll / allSatisfy / map のクロージャの中",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N3-sorted",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed",
+          "note": "sorted は安定ソートなので、同じ優先度の要素の順序が `<=` で入れ替わることで検出する"
+        },
+        {
+          "marker": "N3-removeAll",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N3-allSatisfy",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N3-map",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N3-sorted",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return"
+        },
+        {
+          "marker": "N3-removeAll",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N3-allSatisfy",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return"
+        },
+        {
+          "marker": "N3-map",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return"
+        }
+      ]
+    },
+    {
+      "id": "N4",
+      "section": "7.1",
+      "title": "for の本体の guard と外側の関数本体の比較",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N4-inner",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N4-outer",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N4-outer",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N5",
+      "section": "7.1",
+      "title": "二重の for の両方の階層に比較",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N5-outer",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N5-inner",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N6",
+      "section": "7.1",
+      "title": "while と repeat-while",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N6-while",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N6-repeat",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N6-repeat",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N7",
+      "section": "7.1",
+      "title": "if-let / guard-let の条件の中",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N7-iflet",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N7-guardlet",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N8",
+      "section": "7.1",
+      "title": "即時実行クロージャの初期化子",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N8",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N9",
+      "section": "7.1",
+      "title": "forEach の本体（#117）",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N9",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N9",
+          "operator": "side-effect-removal",
+          "expected": "Killed",
+          "note": "forEach の呼び出しそのものの削除。本体（クロージャ）の中の文は削除の対象にしない"
+        }
+      ]
+    },
+    {
+      "id": "N10",
+      "section": "7.1",
+      "title": "for-in の where と switch の case の where",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N10-for",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N10-case",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N11",
+      "section": "7.1",
+      "title": "defer の中",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N11",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N11",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N11-run",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N11-call",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N12",
+      "section": "7.1",
+      "title": "ラベル付きループ",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N12",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "N13",
+      "section": "7.1",
+      "title": "DispatchQueue.main.async の末尾クロージャ",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N13",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N13",
+          "operator": "side-effect-removal",
+          "expected": "Killed",
+          "note": "completion が呼ばれず、テストの待ち（5 秒）が失敗する"
+        }
+      ]
+    },
+    {
+      "id": "T1",
+      "section": "7.2",
+      "title": "暗黙の return（関数・getter・1式のクロージャ）",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T1-func",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T1-getter",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T1-closure",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T2",
+      "section": "7.2",
+      "title": "暗黙の return の本体が関数呼び出し",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T2",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return",
+          "note": "暗黙の return の式は削除しない（#262）"
+        }
+      ]
+    },
+    {
+      "id": "T3",
+      "section": "7.2",
+      "title": "else 側が比較の三項・三項の入れ子",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T3-cmp",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T3-cmp",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T3-nested",
+          "operator": "ternary-swap",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "T3-nested",
+          "operator": "ternary-swap",
+          "occurrence": 2,
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T4",
+      "section": "7.2",
+      "title": "前の行に日本語のコメント・文字列・絵文字",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T4",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T5",
+      "section": "7.2",
+      "title": "同じテキストの式が2回（2回目だけ検出できる）",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T5-first",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Survived",
+          "note": "結果に影響しない位置（log += 0）"
+        },
+        {
+          "marker": "T5-second",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T6",
+      "section": "7.2",
+      "title": "同じテキストの副作用の文が2回",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T6-first",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T6-second",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T7",
+      "section": "7.2",
+      "title": "演算子の前後に空白が無い・`;` で1行に複数の文",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T7",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T7",
+          "operator": "ternary-swap",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "T7",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T7",
+          "operator": "ternary-swap",
+          "occurrence": 2,
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T8",
+      "section": "7.2",
+      "title": "整数リテラルと演算子の多い長い式",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T8",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T8",
+          "operator": "logical-connector",
+          "original": "&&",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T8",
+          "operator": "boundary",
+          "original": "<=",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T9",
+      "section": "7.2",
+      "title": "オプショナルを含む比較",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T9-coalesce",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T9-ifcase",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T10",
+      "section": "7.2",
+      "title": "文字列補間の中",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T10",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "T11",
+      "section": "7.2",
+      "title": "代入の左辺の添字の中・inout 引数",
+      "file": "SampleApp/Expressions/ExpressionCases.swift",
+      "mutants": [
+        {
+          "marker": "T11-subscript",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T11-subscript",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T11-inout",
+          "operator": "side-effect-removal",
+          "expected": "Killed",
+          "note": "`&x` は式の演算子の対象にならない。swap の呼び出しの削除は対象"
+        }
+      ]
+    },
+    {
+      "id": "D1",
+      "section": "7.3",
+      "title": "ジェネリック関数",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D1",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D2",
+      "section": "7.3",
+      "title": "プロトコル拡張のデフォルト実装",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D2",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D3",
+      "section": "7.3",
+      "title": "条件付き準拠・ジェネリックの where 句",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "noCandidates": [
+        "D3-conformance"
+      ],
+      "mutants": [
+        {
+          "marker": "D3-body",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D4",
+      "section": "7.3",
+      "title": "演算子の実装",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D4",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D5",
+      "section": "7.3",
+      "title": "独自の優先順位グループを持つ独自演算子",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D5",
+          "operator": "boundary",
+          "original": "<=",
+          "expected": "Killed",
+          "note": "優先順位グループは別ファイルにあるが、ツールが同じモジュールのファイルから演算子の宣言を集めるので畳み込める（他のモジュールの演算子は今も unfoldable-operators で対象外）"
+        },
+        {
+          "marker": "D5-samefile",
+          "operator": "boundary",
+          "original": "<=",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/Operators.swift"
+        }
+      ]
+    },
+    {
+      "id": "D6",
+      "section": "7.3",
+      "title": "型のメンバーの初期値・static let の初期値",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D6-member",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "D6-static",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D7",
+      "section": "7.3",
+      "title": "ファイルのトップレベルの let",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D7",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D8",
+      "section": "7.3",
+      "title": "既定の引数",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D8",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "D8-public",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Ignored",
+          "reason": "public-default-argument"
+        }
+      ]
+    },
+    {
+      "id": "D9",
+      "section": "7.3",
+      "title": "let の遅延初期化",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D9",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D10",
+      "section": "7.3",
+      "title": "enum の raw value・@available・#available",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "noCandidates": [
+        "D10-raw",
+        "D10-available"
+      ],
+      "mutants": []
+    },
+    {
+      "id": "D11",
+      "section": "7.3",
+      "title": "#if の条件",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D11",
+          "operator": "logical-connector",
+          "original": "&&",
+          "expected": "Ignored",
+          "reason": "if-config-condition"
+        }
+      ]
+    },
+    {
+      "id": "D12",
+      "section": "7.3",
+      "title": "有効な #if の分岐の中",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D12",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D13",
+      "section": "7.3",
+      "title": "無効な #if の分岐の中（実行先でコンパイルされない分岐）",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D13",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Ignored",
+          "reason": "inactive-if-config",
+          "note": "iOS シミュレータではコンパイルされない `#if os(macOS)` の中。NotReached として未検出に数えるのは誤り。実行先から分かるので、理由つきで対象外にする"
+        }
+      ]
+    },
+    {
+      "id": "D14",
+      "section": "7.3",
+      "title": "ローカル SPM パッケージの @inlinable",
+      "file": "Packages/SampleKit/Sources/SampleKit/RangeMath.swift",
+      "mutants": [
+        {
+          "marker": "D14-inlinable",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Ignored",
+          "reason": "inlinable-body"
+        },
+        {
+          "marker": "D14-inlinable",
+          "operator": "logical-connector",
+          "original": "&&",
+          "expected": "Ignored",
+          "reason": "inlinable-body"
+        },
+        {
+          "marker": "D14-inlinable",
+          "operator": "boundary",
+          "original": "<=",
+          "expected": "Ignored",
+          "reason": "inlinable-body"
+        },
+        {
+          "marker": "D14-plain",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "D15",
+      "section": "7.3",
+      "title": "プロパティラッパーの引数と実装",
+      "file": "SampleApp/Declarations/DeclarationCases.swift",
+      "mutants": [
+        {
+          "marker": "D15-impl",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "D15-arg",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Ignored",
+          "reason": "attribute-argument"
+        },
+        {
+          "marker": "D15-arg",
+          "operator": "ternary-swap",
+          "expected": "Ignored",
+          "reason": "attribute-argument"
+        }
+      ]
+    },
+    {
+      "id": "A1",
+      "section": "7.4",
+      "title": "async 関数の中の await を含む比較",
+      "file": "SampleApp/Concurrency/ConcurrencyCases.swift",
+      "mutants": [
+        {
+          "marker": "A1",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "A2",
+      "section": "7.4",
+      "title": "throws 関数の中の try を含む比較",
+      "file": "SampleApp/Concurrency/ConcurrencyCases.swift",
+      "mutants": [
+        {
+          "marker": "A2",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "A3",
+      "section": "7.4",
+      "title": "withCheckedContinuation の中",
+      "file": "SampleApp/Concurrency/ConcurrencyCases.swift",
+      "mutants": [
+        {
+          "marker": "A3",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "A3",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SE-continuation",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return",
+          "note": "resume はクロージャの本体の中なので文の削除の対象にしない（メモ 8.2 の規則。クロージャが result builder かを構文から判定できないため）。メモ 7.6 の A3 の期待（Timeout）は R11 で確かめる"
+        }
+      ],
+      "note": "A3 の resume の削除（Timeout）は、クロージャの本体を対象にしない規則のため作らない。Timeout は R11 で確かめる"
+    },
+    {
+      "id": "A4",
+      "section": "7.4",
+      "title": "actor・@MainActor・nonisolated",
+      "file": "SampleApp/Concurrency/ConcurrencyCases.swift",
+      "mutants": [
+        {
+          "marker": "A4-actor",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed"
+        },
+        {
+          "marker": "A4-mainactor",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "A4-nonisolated",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "A5",
+      "section": "7.4",
+      "title": "既定のアクター分離 MainActor のターゲット",
+      "file": "SampleApp/Concurrency/ConcurrencyCases.swift",
+      "mutants": [
+        {
+          "marker": "A5",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "A6",
+      "section": "7.4",
+      "title": "Task のクロージャ本体",
+      "file": "SampleApp/Concurrency/ConcurrencyCases.swift",
+      "mutants": [
+        {
+          "marker": "A6",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "A7",
+      "section": "7.4",
+      "title": "internal import・import 無し・SwiftUI だけの import",
+      "file": "SampleApp/Concurrency/",
+      "mutants": [
+        {
+          "marker": "A7-internal",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed",
+          "file": "SampleApp/Concurrency/InternalImportCase.swift"
+        },
+        {
+          "marker": "A7-noimport",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed",
+          "file": "SampleApp/Concurrency/NoImportCase.swift"
+        },
+        {
+          "marker": "A7-swiftui",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed",
+          "file": "SampleApp/Concurrency/SwiftUIOnlyCase.swift"
+        }
+      ]
+    },
+    {
+      "id": "S1",
+      "section": "7.5",
+      "title": "View の body の中の if",
+      "file": "SampleApp/App/SampleApp.swift",
+      "mutants": [
+        {
+          "marker": "S1",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Survived",
+          "note": "ホストアプリの画面に表示されるので到達するが、View のテストが無い"
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "section": "7.5",
+      "title": "修飾子の引数・@State の初期値",
+      "file": "SampleApp/App/SampleApp.swift",
+      "mutants": [
+        {
+          "marker": "S2-state",
+          "operator": "boolean-literal",
+          "original": "false",
+          "expected": "Survived"
+        },
+        {
+          "marker": "S2-disabled",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Survived"
+        },
+        {
+          "marker": "S2-opacity",
+          "operator": "ternary-swap",
+          "expected": "Survived"
+        },
+        {
+          "marker": "S2-badge",
+          "operator": "logical-connector",
+          "original": "||",
+          "expected": "Survived",
+          "file": "SampleApp/SwiftUI/SwiftUICases.swift"
+        },
+        {
+          "marker": "S2-badge",
+          "operator": "equality-flip",
+          "original": "!=",
+          "expected": "Survived",
+          "file": "SampleApp/SwiftUI/SwiftUICases.swift"
+        },
+        {
+          "marker": "S2-badge",
+          "operator": "ternary-swap",
+          "expected": "Survived",
+          "file": "SampleApp/SwiftUI/SwiftUICases.swift"
+        }
+      ]
+    },
+    {
+      "id": "S3",
+      "section": "7.5",
+      "title": "@Observable クラスのメソッド",
+      "file": "SampleApp/SwiftUI/SwiftUICases.swift",
+      "mutants": [
+        {
+          "marker": "S3",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "S4",
+      "section": "7.5",
+      "title": "@Observable クラスのプロパティの初期値",
+      "file": "SampleApp/SwiftUI/SwiftUICases.swift",
+      "mutants": [
+        {
+          "marker": "S4",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed",
+          "note": "アタッチドマクロが初期値を写してもビルドが通ることを確認済み"
+        }
+      ]
+    },
+    {
+      "id": "S5",
+      "section": "7.5",
+      "title": "buildEither を持たない独自の @resultBuilder",
+      "file": "SampleApp/SwiftUI/SwiftUICases.swift",
+      "mutants": [
+        {
+          "marker": "S5",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "S5-if",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "S6",
+      "section": "7.5",
+      "title": "#Predicate の中（#307）",
+      "file": "SampleApp/SwiftUI/SwiftUICases.swift",
+      "mutants": [
+        {
+          "marker": "S6",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Ignored",
+          "reason": "macro-expansion"
+        }
+      ]
+    },
+    {
+      "id": "S7",
+      "section": "7.5",
+      "title": "#Preview の中",
+      "file": "SampleApp/SwiftUI/SwiftUICases.swift",
+      "mutants": [
+        {
+          "marker": "S7",
+          "operator": "boolean-literal",
+          "original": "true",
+          "expected": "Ignored",
+          "reason": "macro-expansion"
+        }
+      ]
+    },
+    {
+      "id": "S8",
+      "section": "7.5",
+      "title": "View から切り出したテスト可能な関数",
+      "file": "SampleApp/SwiftUI/SwiftUICases.swift",
+      "mutants": [
+        {
+          "marker": "S8",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "S8",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "R1",
+      "section": "7.6",
+      "title": "戻り値 Void の呼び出し",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R1",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "section": "7.6",
+      "title": "`_ =` と @discardableResult",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R2-discard",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "R2-discardable",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SE-repo-save",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "section": "7.6",
+      "title": "super.viewDidLoad()",
+      "file": "SampleApp/App/SampleApp.swift",
+      "mutants": [
+        {
+          "marker": "R3",
+          "operator": "side-effect-removal",
+          "expected": "Survived",
+          "reason": "ホストアプリの画面に表示されるので到達するが、テストが無い"
+        }
+      ]
+    },
+    {
+      "id": "R4",
+      "section": "7.6",
+      "title": "fatalError / preconditionFailure / Never を返す自作関数",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R4-fatal",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "never-returning"
+        },
+        {
+          "marker": "R4-precondition",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "never-returning"
+        },
+        {
+          "marker": "R4-never",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "never-returning"
+        },
+        {
+          "marker": "R4-never",
+          "operator": "negation-removal",
+          "original": "!",
+          "expected": "Killed",
+          "killKind": "crash",
+          "note": "ensure(true) が failHard() を呼んでクラッシュする"
+        }
+      ]
+    },
+    {
+      "id": "R5",
+      "section": "7.6",
+      "title": "guard の else 節の return",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R5",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        }
+      ],
+      "note": "`return nil` は呼び出しではないので候補にならない"
+    },
+    {
+      "id": "R6",
+      "section": "7.6",
+      "title": "super.init / self.init",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R6-super",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "initializer-delegation"
+        },
+        {
+          "marker": "R6-self",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "initializer-delegation"
+        }
+      ]
+    },
+    {
+      "id": "R7",
+      "section": "7.6",
+      "title": "deinit の本体（#41）",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R7",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Ignored",
+          "reason": "deinit"
+        }
+      ],
+      "note": "deinit の本体の `counter.value += 1` は呼び出しではないので文の削除の候補にならない"
+    },
+    {
+      "id": "R8",
+      "section": "7.6",
+      "title": "NSLock の lock / unlock",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R8-lock",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "synchronization"
+        },
+        {
+          "marker": "R8-unlock",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "synchronization"
+        },
+        {
+          "marker": "SE-locked-read",
+          "operator": "side-effect-removal",
+          "occurrence": 1,
+          "expected": "Ignored",
+          "reason": "synchronization"
+        },
+        {
+          "marker": "SE-locked-read",
+          "operator": "side-effect-removal",
+          "occurrence": 2,
+          "expected": "Ignored",
+          "reason": "synchronization"
+        }
+      ]
+    },
+    {
+      "id": "R9",
+      "section": "7.6",
+      "title": "print / Logger / os_log / layoutIfNeeded / setNeedsLayout（arid）",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R9-print",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        },
+        {
+          "marker": "R9-logger",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        },
+        {
+          "marker": "R9-print",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        },
+        {
+          "marker": "R9-logger",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        },
+        {
+          "marker": "R9-oslog",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        },
+        {
+          "marker": "R9-setNeedsLayout",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        },
+        {
+          "marker": "R9-layoutIfNeeded",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        }
+      ]
+    },
+    {
+      "id": "R10",
+      "section": "7.6",
+      "title": "i += 1（複合代入）",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "noCandidates": [],
+      "mutants": [
+        {
+          "marker": "R10-cond",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        },
+        {
+          "marker": "R10",
+          "operator": "compound-assignment",
+          "original": "+=",
+          "expected": "Timeout",
+          "note": "複合代入の反転（検証用プロジェクトでは有効にしている）。ループのカウンタの `i += 1` を `i -= 1` にすると終わらなくなる。既定で無効にしている理由の1つ"
+        }
+      ],
+      "note": "メモ 7.6 は削除で Timeout を期待していたが、メモ 8.2 の規則（関数呼び出しの文だけ）を採り、複合代入は削除しない。削除はほぼ必ず無限ループになり、待ち時間の割に情報が少ない。Timeout は R11 で確かめる。複合代入の反転（compound-assignment）を足したので、この行には Timeout になるミュータントが1件できる"
+    },
+    {
+      "id": "R11",
+      "section": "7.6",
+      "title": "削除で無限ループになる呼び出し",
+      "file": "SampleApp/SideEffects/SideEffectCases.swift",
+      "mutants": [
+        {
+          "marker": "R11-cond",
+          "operator": "negation-removal",
+          "original": "!",
+          "expected": "Killed"
+        },
+        {
+          "marker": "R11",
+          "operator": "side-effect-removal",
+          "expected": "Timeout"
+        }
+      ]
+    },
+    {
+      "id": "E1",
+      "section": "7.7",
+      "title": "maxOf の `>` → `>=`（等価）",
+      "file": "SampleApp/Equivalence/EquivalenceCases.swift",
+      "mutants": [
+        {
+          "marker": "E1",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Survived",
+          "note": "等価ミュータント"
+        },
+        {
+          "marker": "E1",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "E2",
+      "section": "7.7",
+      "title": "absInt の `<` → `<=`（等価）",
+      "file": "SampleApp/Equivalence/EquivalenceCases.swift",
+      "mutants": [
+        {
+          "marker": "E2",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Survived",
+          "note": "等価ミュータント"
+        },
+        {
+          "marker": "E2",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "E3",
+      "section": "7.7",
+      "title": "境界値をテストしていない比較",
+      "file": "SampleApp/Equivalence/EquivalenceCases.swift",
+      "mutants": [
+        {
+          "marker": "E3-boundary",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Survived"
+        },
+        {
+          "marker": "E3-equality",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "E4",
+      "section": "7.7",
+      "title": "animated: true（arid）",
+      "file": "SampleApp/Equivalence/EquivalenceCases.swift",
+      "mutants": [
+        {
+          "marker": "E4",
+          "operator": "boolean-literal",
+          "original": "true",
+          "expected": "Ignored",
+          "reason": "arid-argument"
+        },
+        {
+          "marker": "E4",
+          "operator": "side-effect-removal",
+          "expected": "NotReached",
+          "note": "close はどのテストからも呼ばれない"
+        }
+      ]
+    },
+    {
+      "id": "E5",
+      "section": "7.7",
+      "title": "呼ぶが結果を検証しないテスト",
+      "file": "SampleApp/Equivalence/EquivalenceCases.swift",
+      "mutants": [
+        {
+          "marker": "E5",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Survived",
+          "note": "未検出（notDetected）として報告されること"
+        }
+      ]
+    },
+    {
+      "id": "E6",
+      "section": "7.7",
+      "title": "どのテストからも呼ばれない関数",
+      "file": "SampleApp/Equivalence/EquivalenceCases.swift",
+      "mutants": [
+        {
+          "marker": "E6",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "NotReached"
+        }
+      ]
+    },
+    {
+      "id": "X1",
+      "section": "7.8",
+      "title": "XCTest だけ・Swift Testing だけで検出",
+      "file": "SampleApp/Infrastructure/TestKindCases.swift",
+      "mutants": [
+        {
+          "marker": "X1-xctest",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed",
+          "killedBy": "XCTest"
+        },
+        {
+          "marker": "X1-swifttesting",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed",
+          "killedBy": "Swift Testing"
+        }
+      ]
+    },
+    {
+      "id": "X2",
+      "section": "7.8",
+      "title": "Swift Testing のパラメータ化テスト",
+      "file": "SampleApp/Infrastructure/TestKindCases.swift",
+      "mutants": [
+        {
+          "marker": "X2",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed",
+          "killedBy": "Swift Testing"
+        }
+      ]
+    },
+    {
+      "id": "X3",
+      "section": "7.8",
+      "title": "ミュータントでクラッシュする",
+      "file": "SampleApp/Infrastructure/TestKindCases.swift",
+      "mutants": [
+        {
+          "marker": "X3",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed",
+          "killKind": "crash"
+        },
+        {
+          "marker": "X3",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "X7",
+      "section": "7.8",
+      "title": "ホットループ（無効時の実行時間がベースラインとほぼ同じ）",
+      "file": "SampleApp/Infrastructure/TestKindCases.swift",
+      "mutants": [
+        {
+          "marker": "X7",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "X10",
+      "section": "7.8",
+      "title": "`==` だけを定義した型（`!=` が無い）",
+      "file": "SampleApp/Infrastructure/TestKindCases.swift",
+      "mutants": [
+        {
+          "marker": "X10-impl",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        },
+        {
+          "marker": "X10",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "CompileError",
+          "note": "ビルドの診断から特定して外し、再ビルドする"
+        }
+      ]
+    },
+    {
+      "id": "RV",
+      "section": "7.9",
+      "title": "あとから加えた演算子: 既存のケースの行に増えたミュータント",
+      "file": "SampleApp/",
+      "mutants": [
+        {
+          "marker": "A1",
+          "operator": "return-value",
+          "original": "1",
+          "expected": "Killed",
+          "file": "SampleApp/Concurrency/ConcurrencyCases.swift"
+        },
+        {
+          "marker": "RV-parse",
+          "operator": "return-value",
+          "original": "v",
+          "expected": "Killed",
+          "file": "SampleApp/Concurrency/ConcurrencyCases.swift"
+        },
+        {
+          "marker": "A2",
+          "operator": "return-value",
+          "original": "1",
+          "expected": "Killed",
+          "file": "SampleApp/Concurrency/ConcurrencyCases.swift"
+        },
+        {
+          "marker": "A7-internal",
+          "operator": "normalization-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Concurrency/InternalImportCase.swift"
+        },
+        {
+          "marker": "RV-pickValue",
+          "operator": "return-value",
+          "original": "x",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "D10-ifavailable",
+          "operator": "return-value",
+          "original": "1",
+          "expected": "Survived",
+          "note": "テストは 0 と 1 のどちらも受け入れる。iOS 27 より前のシミュレータでは `#available(iOS 27, *)` の中に入らないので NotReached になる",
+          "file": "SampleApp/Declarations/DeclarationCases.swift",
+          "acceptable": [
+            "Survived",
+            "NotReached"
+          ]
+        },
+        {
+          "marker": "T4",
+          "operator": "return-value",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "RV-label-less",
+          "operator": "return-value",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T5-second",
+          "operator": "return-value",
+          "original": "1",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "RV-twice-log",
+          "operator": "return-value",
+          "original": "log",
+          "expected": "Survived",
+          "note": "log は常に 0（log += 0 だけ）なので 0 に置き換えても等価",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "RV-appendTwice",
+          "operator": "return-value",
+          "original": "log",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T7",
+          "operator": "return-value",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T9-ifcase",
+          "operator": "condition-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T9-ifcase",
+          "operator": "return-value",
+          "original": "1",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "RV-mark",
+          "operator": "return-value",
+          "original": "copy",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "RV-countMultiples",
+          "operator": "return-value",
+          "original": "c",
+          "expected": "Killed",
+          "file": "SampleApp/Infrastructure/TestKindCases.swift"
+        },
+        {
+          "marker": "N1",
+          "operator": "return-value",
+          "original": "1",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N2-inner",
+          "operator": "return-value",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-removing",
+          "operator": "return-value",
+          "original": "copy",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N4-inner",
+          "operator": "loop-control",
+          "original": "continue",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N4-outer",
+          "operator": "return-value",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-pairsBelow",
+          "operator": "return-value",
+          "original": "n",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-triangular",
+          "operator": "return-value",
+          "original": "total",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-countdown",
+          "operator": "return-value",
+          "original": "out",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N7-iflet",
+          "operator": "condition-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N7-iflet",
+          "operator": "return-value",
+          "original": "1",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N7-guardlet",
+          "operator": "condition-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-atLeastFour",
+          "operator": "return-value",
+          "original": "x",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N8",
+          "operator": "condition-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-attempts",
+          "operator": "return-value",
+          "original": "attempts",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-countPositive",
+          "operator": "return-value",
+          "original": "n",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-countPositiveWhere",
+          "operator": "return-value",
+          "original": "n",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N10-case",
+          "operator": "return-value",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-sign-zero",
+          "operator": "return-value",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-sign-negative",
+          "operator": "return-value",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-drain",
+          "operator": "return-value",
+          "original": "log",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-rows",
+          "operator": "return-value",
+          "original": "rows",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-save",
+          "operator": "return-value",
+          "original": "saved.count",
+          "expected": "Survived",
+          "note": "save の戻り値はどの呼び出し側も使っていない",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "SE-locked-read",
+          "operator": "return-value",
+          "original": "value",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "RV-firstPositive",
+          "operator": "return-value",
+          "original": "first",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "RV-logged",
+          "operator": "return-value",
+          "original": "x",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "RV-sumBelow",
+          "operator": "return-value",
+          "original": "total",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "RV-drainQueue",
+          "operator": "return-value",
+          "original": "total",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        }
+      ]
+    },
+    {
+      "id": "O1",
+      "section": "7.9",
+      "title": "戻り値の enum の case の置き換え（手作業の M12 相当）",
+      "file": "SampleApp/Operators/OperatorCases.swift",
+      "mutants": [
+        {
+          "marker": "O1-unlinked",
+          "operator": "return-value",
+          "original": ".noVariant",
+          "occurrence": 1,
+          "expected": "NotReached",
+          "note": "物品マスタ未紐付け（nil）のテストが無いので、この return にはどのテストも到達しない"
+        },
+        {
+          "marker": "O1-unlinked",
+          "operator": "return-value",
+          "original": ".noVariant",
+          "occurrence": 2,
+          "expected": "NotReached"
+        },
+        {
+          "marker": "O1-missing",
+          "operator": "return-value",
+          "original": ".unknown",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "O1-missing",
+          "operator": "return-value",
+          "original": ".unknown",
+          "occurrence": 2,
+          "expected": "Killed"
+        },
+        {
+          "marker": "O1-enabled",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "O2",
+      "section": "7.9",
+      "title": "ループの中のフラグを早期 return にする（手作業の M10 相当）",
+      "file": "SampleApp/Operators/OperatorCases.swift",
+      "noCandidates": [
+        "O2-continue",
+        "O2t-continue"
+      ],
+      "mutants": [
+        {
+          "marker": "O2-flag",
+          "operator": "boolean-literal",
+          "original": "false",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2-has",
+          "operator": "return-value",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2-has",
+          "operator": "return-value",
+          "occurrence": 2,
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2-unknown",
+          "operator": "early-return",
+          "expected": "Survived",
+          "note": "判定不能の品目の後ろにバリエーションありの品目がある組み合わせのテストが無い"
+        },
+        {
+          "marker": "O2-unknown",
+          "operator": "boolean-literal",
+          "original": "true",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2-return",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2t-flag",
+          "operator": "boolean-literal",
+          "original": "false",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2t-has",
+          "operator": "return-value",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2t-has",
+          "operator": "return-value",
+          "occurrence": 2,
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2t-unknown",
+          "operator": "early-return",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2t-unknown",
+          "operator": "boolean-literal",
+          "original": "true",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O2t-return",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        }
+      ],
+      "note": "O2-continue / O2t-continue は switch の中の continue で、switch の後にループの本体の文が無いため break にしても等価。loop-control はこの形を作らない"
+    },
+    {
+      "id": "O3",
+      "section": "7.9",
+      "title": "条件の削除（手作業の M01 相当）",
+      "file": "SampleApp/Operators/OperatorCases.swift",
+      "mutants": [
+        {
+          "marker": "O3-guard",
+          "operator": "negation-removal",
+          "original": "!",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O3-guard",
+          "operator": "condition-removal",
+          "expected": "Survived",
+          "note": "空文字のテストが無い"
+        },
+        {
+          "marker": "O3-return",
+          "operator": "return-value",
+          "original": "host",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O3-port",
+          "operator": "condition-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O3-port",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O3-port-return",
+          "operator": "return-value",
+          "original": "p",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "O4",
+      "section": "7.9",
+      "title": "continue ↔ break",
+      "file": "SampleApp/Operators/OperatorCases.swift",
+      "mutants": [
+        {
+          "marker": "O4-break",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O4-break",
+          "operator": "loop-control",
+          "original": "break",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O4-return",
+          "operator": "return-value",
+          "original": "count",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "O5",
+      "section": "7.9",
+      "title": "正規化の呼び出しを外す（手作業の M06 相当）",
+      "file": "SampleApp/Operators/OperatorCases.swift",
+      "mutants": [
+        {
+          "marker": "O5-lowercased",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O5-lowercased",
+          "operator": "normalization-removal",
+          "expected": "Survived",
+          "note": "大文字の接続先を渡すテストが無い"
+        },
+        {
+          "marker": "O5-trim",
+          "operator": "normalization-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O5-trim",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return"
+        }
+      ]
+    },
+    {
+      "id": "O6",
+      "section": "7.9",
+      "title": "設定（xcmutate.config.json の aridCalls）で対象外にした呼び出し",
+      "file": "SampleApp/Operators/OperatorCases.swift",
+      "mutants": [
+        {
+          "marker": "O6",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        },
+        {
+          "marker": "O6",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Ignored",
+          "reason": "arid-call"
+        },
+        {
+          "marker": "O6-return",
+          "operator": "return-value",
+          "original": "count",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "L1",
+      "section": "7.9",
+      "title": "Swift 5 モード・InternalImportsByDefault 無しのモジュール（普通の import Foundation）",
+      "file": "LegacyKit/LegacyFormatting.swift",
+      "mutants": [
+        {
+          "marker": "L1",
+          "operator": "boundary",
+          "original": "<",
+          "expected": "Killed"
+        },
+        {
+          "marker": "L1",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        },
+        {
+          "marker": "L1-trim",
+          "operator": "normalization-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "L1-trim",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return"
+        }
+      ],
+      "note": "同じモジュールの import を書かないファイル（L2）と混在してもビルドできること（ヘルパーは import を足さない）"
+    },
+    {
+      "id": "L2",
+      "section": "7.9",
+      "title": "import を書かないファイル（同じモジュールに普通の import Foundation のファイルがある）",
+      "file": "LegacyKit/LegacyPlain.swift",
+      "mutants": [
+        {
+          "marker": "L2",
+          "operator": "equality-flip",
+          "original": "==",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "S6",
+      "section": "7.10",
+      "title": "あとから加えた演算子: 既存のケースの行に増えたミュータント",
+      "file": "SampleApp/",
+      "mutants": [
+        {
+          "marker": "D14-inlinable",
+          "operator": "operand-removal",
+          "occurrence": 1,
+          "expected": "Ignored",
+          "reason": "inlinable-body",
+          "file": "Packages/SampleKit/Sources/SampleKit/RangeMath.swift"
+        },
+        {
+          "marker": "D14-inlinable",
+          "operator": "operand-removal",
+          "occurrence": 2,
+          "expected": "Ignored",
+          "reason": "inlinable-body",
+          "file": "Packages/SampleKit/Sources/SampleKit/RangeMath.swift"
+        },
+        {
+          "marker": "D8",
+          "operator": "return-negation",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "D8-public",
+          "operator": "return-negation",
+          "expected": "Killed",
+          "note": "既定の引数は対象外だが、本体の force の反転は対象",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "D11",
+          "operator": "operand-removal",
+          "occurrence": 1,
+          "expected": "Ignored",
+          "reason": "if-config-condition",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "D11",
+          "operator": "operand-removal",
+          "occurrence": 2,
+          "expected": "Ignored",
+          "reason": "if-config-condition",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-kit-range",
+          "operator": "return-negation",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-kit-positive",
+          "operator": "return-negation",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-kit-featureB",
+          "operator": "return-negation",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-abs",
+          "operator": "arithmetic",
+          "original": "-",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/Operators.swift"
+        },
+        {
+          "marker": "T7",
+          "operator": "arithmetic",
+          "original": "-",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "operand-removal",
+          "occurrence": 1,
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "operand-removal",
+          "occurrence": 2,
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "arithmetic",
+          "occurrence": 1,
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "arithmetic",
+          "occurrence": 2,
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "arithmetic",
+          "occurrence": 3,
+          "expected": "Survived",
+          "note": "テストの入力が c = 0 だけなので `- c / 3` を `+ c / 3` にしても値が変わらない（入力の不足）",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "arithmetic",
+          "occurrence": 4,
+          "expected": "Survived",
+          "note": "c = 0 なので `c / 3` と `c * 3` が同じ（入力の不足）",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "arithmetic",
+          "occurrence": 5,
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "arithmetic",
+          "occurrence": 6,
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T8",
+          "operator": "arithmetic",
+          "occurrence": 7,
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T11-subscript",
+          "operator": "arithmetic",
+          "original": "-",
+          "expected": "Killed",
+          "killKind": "crash",
+          "note": "`values.count + 1` で範囲外アクセス",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "N3-allSatisfy",
+          "operator": "return-negation",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N7-iflet",
+          "operator": "arithmetic",
+          "original": "-",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "S2-badge",
+          "operator": "operand-removal",
+          "occurrence": 1,
+          "expected": "Survived",
+          "file": "SampleApp/SwiftUI/SwiftUICases.swift"
+        },
+        {
+          "marker": "S2-badge",
+          "operator": "operand-removal",
+          "occurrence": 2,
+          "expected": "Survived",
+          "file": "SampleApp/SwiftUI/SwiftUICases.swift"
+        }
+      ],
+      "note": "nil-coalescing-default と arithmetic は既定で無効。検証用プロジェクトでは xcmutate.config.json の enabledOperators で arithmetic を有効にしている。式ごとのスイッチの上限は 12"
+    },
+    {
+      "id": "SE",
+      "section": "7.6",
+      "title": "文の削除: 各ケースの補助の行",
+      "file": "SampleApp/",
+      "mutants": [
+        {
+          "marker": "SE-scene",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "result-builder",
+          "file": "SampleApp/App/SampleApp.swift"
+        },
+        {
+          "marker": "SE-view-body",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "result-builder",
+          "file": "SampleApp/App/SampleApp.swift"
+        },
+        {
+          "marker": "SE-representable",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return",
+          "file": "SampleApp/App/SampleApp.swift"
+        },
+        {
+          "marker": "SE-repository-add",
+          "operator": "side-effect-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Concurrency/ConcurrencyCases.swift"
+        },
+        {
+          "marker": "SE-clamp-init",
+          "operator": "side-effect-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-clamp-set",
+          "operator": "side-effect-removal",
+          "expected": "NotReached",
+          "note": "setter はどのテストからも呼ばれない",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-kit-range",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-kit-positive",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-kit-featureB",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "SE-abs",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return",
+          "file": "SampleApp/Declarations/Operators.swift"
+        },
+        {
+          "marker": "SE-buildBlock",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return",
+          "file": "SampleApp/SwiftUI/SwiftUICases.swift"
+        },
+        {
+          "marker": "SE-badge-body",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "result-builder",
+          "file": "SampleApp/SwiftUI/SwiftUICases.swift"
+        }
+      ]
+    },
+    {
+      "id": "X8",
+      "section": "7.8",
+      "title": "ファイル名に + を含む・別モジュールの同名ファイル",
+      "file": "SampleApp/Infrastructure/",
+      "mutants": [
+        {
+          "marker": "X8-plus",
+          "operator": "boundary",
+          "original": ">",
+          "expected": "Killed",
+          "file": "SampleApp/Infrastructure/UIView+Layout.swift"
+        },
+        {
+          "marker": "X8-featureA",
+          "operator": "boundary",
+          "original": ">=",
+          "expected": "Killed",
+          "file": "SampleApp/Infrastructure/FeatureA/Validator.swift"
+        },
+        {
+          "marker": "X8-featureB",
+          "operator": "boundary",
+          "original": "<=",
+          "expected": "Killed",
+          "file": "Packages/SampleKit/Sources/SampleKit/FeatureB/Validator.swift"
+        }
+      ]
+    },
+    {
+      "id": "S7",
+      "section": "7.11",
+      "title": "あとから加えた演算子: 既存のケースの行に増えたミュータント",
+      "file": "SampleApp/",
+      "mutants": [
+        {
+          "marker": "S1",
+          "operator": "condition-constant",
+          "expected": "Survived",
+          "file": "SampleApp/App/SampleApp.swift",
+          "note": "SwiftUI の body。画面のテストが無い"
+        },
+        {
+          "marker": "EB-viewDidLoad",
+          "operator": "empty-body",
+          "expected": "Survived",
+          "file": "SampleApp/App/SampleApp.swift",
+          "note": "画面のテストが無い"
+        },
+        {
+          "marker": "EB-clamp",
+          "operator": "empty-body",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "D15-impl",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "D15-impl",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "D9",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Declarations/DeclarationCases.swift"
+        },
+        {
+          "marker": "T4",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T5-first",
+          "operator": "condition-constant",
+          "expected": "Survived",
+          "file": "SampleApp/Expressions/ExpressionCases.swift",
+          "note": "T5-first の boundary と同じ穴（この行の効果を確かめるテストが無い）"
+        },
+        {
+          "marker": "T5-first",
+          "operator": "compound-assignment",
+          "expected": "Survived",
+          "file": "SampleApp/Expressions/ExpressionCases.swift",
+          "note": "T5-first の boundary と同じ穴"
+        },
+        {
+          "marker": "T5-second",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "T9-ifcase",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Expressions/ExpressionCases.swift"
+        },
+        {
+          "marker": "CA-x7-count",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/Infrastructure/TestKindCases.swift"
+        },
+        {
+          "marker": "N1",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N2-outer",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N4-inner",
+          "operator": "guard-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "CA-n4-count",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N5-inner",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N5-inner",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N6-while",
+          "operator": "compound-assignment",
+          "occurrence": 1,
+          "expected": "Timeout",
+          "file": "SampleApp/Nested/NestedCases.swift",
+          "note": "ループのカウンタ。-= にすると終わらなくなる（Timeout）"
+        },
+        {
+          "marker": "N6-while",
+          "operator": "compound-assignment",
+          "occurrence": 2,
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N6-repeat",
+          "operator": "compound-assignment",
+          "expected": "Timeout",
+          "file": "SampleApp/Nested/NestedCases.swift",
+          "note": "ループのカウンタ。+= にすると終わらなくなる（Timeout）"
+        },
+        {
+          "marker": "N7-iflet",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N9",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N9",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N10-for",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "RV-sign-zero",
+          "operator": "switch-case-removal",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "EB-run",
+          "operator": "empty-body",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N11",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "N12",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "CA-n12-rows",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/Nested/NestedCases.swift"
+        },
+        {
+          "marker": "O4-break",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/Operators/OperatorCases.swift"
+        },
+        {
+          "marker": "CA-o4-count",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/Operators/OperatorCases.swift"
+        },
+        {
+          "marker": "EB-store",
+          "operator": "empty-body",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "R7",
+          "operator": "condition-constant",
+          "expected": "Ignored",
+          "reason": "deinit",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "R7",
+          "operator": "compound-assignment",
+          "expected": "Ignored",
+          "reason": "deinit",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "EB-increment",
+          "operator": "empty-body",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "CA-increment",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "EB-ensure",
+          "operator": "empty-body",
+          "expected": "Survived",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift",
+          "note": "テストは ensure(true) だけ"
+        },
+        {
+          "marker": "R4-never",
+          "operator": "condition-constant",
+          "expected": "Survived",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift",
+          "note": "テストは ensure(true) だけなので、本体を通らなくても区別できない"
+        },
+        {
+          "marker": "CA-r10-total",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "CA-r11-total",
+          "operator": "compound-assignment",
+          "expected": "Killed",
+          "file": "SampleApp/SideEffects/SideEffectCases.swift"
+        },
+        {
+          "marker": "S5-if",
+          "operator": "condition-constant",
+          "expected": "Killed",
+          "file": "SampleApp/SwiftUI/SwiftUICases.swift"
+        }
+      ],
+      "note": "empty-body・switch-case-removal・condition-constant（既定で有効）と、compound-assignment・guard-removal（検証用プロジェクトでは有効にしている）が、既存のケースの行に作るミュータント。EB-* と CA-* のマーカーは、このために既存の行に足したもの"
+    },
+    {
+      "id": "X13",
+      "section": "7.12",
+      "title": "設定の exclude の ! で対象に戻したファイル（Kept.swift）",
+      "file": "SampleApp/Excluded/Kept.swift",
+      "mutants": [
+        {
+          "marker": "X13-kept",
+          "operator": "boundary",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "X12",
+      "section": "7.12",
+      "title": "名前が Test.swift で終わる製品コード（ABTest.swift）は対象にする",
+      "file": "SampleApp/Infrastructure/ABTest.swift",
+      "mutants": [
+        {
+          "marker": "X12",
+          "operator": "equality-flip",
+          "expected": "Killed"
+        },
+        {
+          "marker": "X12",
+          "operator": "ternary-swap",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "OP1",
+      "section": "12",
+      "title": "プロセスで1回だけ評価されるコード（static let の初期値）: 最初に触れたテストとは別のスイートのテストが検出する。--select-tests reach で絞り込まないこと、--shared-process で1件だけの実行に戻したときも絞り込まないこと",
+      "file": "SampleApp/Infrastructure/OncePerProcess.swift",
+      "mutants": [
+        {
+          "marker": "OP1-init",
+          "operator": "boolean-literal",
+          "expected": "Killed",
+          "note": "static let の初期値の中。最初に触れた OnceATouchTests は検出せず、OnceBUseTests が検出する"
+        },
+        {
+          "marker": "OP1",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "OP1",
+          "operator": "ternary-swap",
+          "expected": "Killed",
+          "note": "static let の初期値から1回だけ呼ばれる関数。構文からは1回だけとは分からない。OnceBUseTests だけが検出する"
+        },
+        {
+          "marker": "OP1-use",
+          "operator": "boundary",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "EB1",
+      "section": "7.11",
+      "title": "empty-body: 代入だけで状態を更新する関数（テストが状態を確かめる）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "EB1-state",
+          "operator": "boolean-literal",
+          "expected": "Survived",
+          "note": "初期値を確かめるテストが無い（意図していない穴だが、実際の結果どおり Survived）"
+        },
+        {
+          "marker": "EB1",
+          "operator": "empty-body",
+          "expected": "Killed"
+        },
+        {
+          "marker": "EB1-assign",
+          "operator": "boolean-literal",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "EB2",
+      "section": "7.11",
+      "title": "empty-body: テストが呼ぶだけで状態を確かめない関数（生き残る）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "EB2",
+          "operator": "empty-body",
+          "expected": "Survived"
+        }
+      ]
+    },
+    {
+      "id": "EB3",
+      "section": "7.11",
+      "title": "empty-body: 呼び出しの文だけの本体には作らない（文の削除が1件ずつ扱う）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "noCandidates": [
+        "EB3"
+      ],
+      "mutants": [
+        {
+          "marker": "EB3-first",
+          "operator": "side-effect-removal",
+          "expected": "Survived",
+          "note": "2回呼ぶうちの1回を消しても結果は同じ（等価）"
+        },
+        {
+          "marker": "EB3-second",
+          "operator": "side-effect-removal",
+          "expected": "Survived",
+          "note": "2回呼ぶうちの1回を消しても結果は同じ（等価）"
+        }
+      ]
+    },
+    {
+      "id": "EB4",
+      "section": "7.11",
+      "title": "empty-body: 早期 return の guard と呼び出しだけの本体には作らない",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "noCandidates": [
+        "EB4"
+      ],
+      "mutants": [
+        {
+          "marker": "EB4-guard",
+          "operator": "negation-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "EB4-guard",
+          "operator": "guard-removal",
+          "expected": "Survived",
+          "note": "既に有効なら何もしない guard。外しても activate() をもう一度呼ぶだけで結果は同じ（等価）"
+        },
+        {
+          "marker": "EB4-call",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "CA1",
+      "section": "7.11",
+      "title": "compound-assignment: += → -=（テストが値を確かめる）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "CA1-body",
+          "operator": "empty-body",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CA1",
+          "operator": "compound-assignment",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "CA2",
+      "section": "7.11",
+      "title": "compound-assignment: 0 でしか呼ばないので区別できない（生き残る）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "CA2-body",
+          "operator": "empty-body",
+          "expected": "Survived",
+          "note": "discount(0) でしか呼ばないので、本体を空にしても区別できない"
+        },
+        {
+          "marker": "CA2",
+          "operator": "compound-assignment",
+          "expected": "Survived"
+        }
+      ]
+    },
+    {
+      "id": "CA3",
+      "section": "7.11",
+      "title": "compound-assignment: 文字列の +=（リテラルなら作らない。変数ならコンパイルできない）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "noCandidates": [
+        "CA3-literal"
+      ],
+      "mutants": [
+        {
+          "marker": "CA3-body",
+          "operator": "empty-body",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CA3-variable",
+          "operator": "compound-assignment",
+          "expected": "CompileError",
+          "note": "`label -= suffix` は String に無いのでコンパイルできない。X10 と同じビルドで両方のエラーが集まる（buildCount 2）"
+        }
+      ]
+    },
+    {
+      "id": "CA4",
+      "section": "7.11",
+      "title": "compound-assignment: *= → /=",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "CA4-body",
+          "operator": "empty-body",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CA4",
+          "operator": "compound-assignment",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "SC1",
+      "section": "7.11",
+      "title": "switch-case-removal: default のある switch の case を1つずつ外す",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "noCandidates": [
+        "SC1-same-as-default",
+        "SC1-default"
+      ],
+      "mutants": [
+        {
+          "marker": "SC1-small",
+          "operator": "switch-case-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SC1-small",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SC1-multi",
+          "operator": "switch-case-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SC1-multi",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SC1-untested",
+          "operator": "switch-case-removal",
+          "expected": "NotReached",
+          "note": "`.huge` を渡すテストが無い。`where !isOn(ID)` はパターンが合ったときだけ評価されるので NotReached"
+        },
+        {
+          "marker": "SC1-untested",
+          "operator": "return-value",
+          "expected": "NotReached"
+        }
+      ]
+    },
+    {
+      "id": "SC2",
+      "section": "7.11",
+      "title": "switch-case-removal: where 節のある case・default の無い switch には作らない",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "noCandidates": [
+        "SC2-default"
+      ],
+      "mutants": [
+        {
+          "marker": "SC2-where",
+          "operator": "boundary",
+          "expected": "Survived",
+          "note": "200 でしかテストしていない（境界の 100 が無い）"
+        },
+        {
+          "marker": "SC2-where",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SC2-zero",
+          "operator": "switch-case-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SC2-zero",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SC2-exhaustive-small",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SC2-exhaustive-rest",
+          "operator": "return-value",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "TN",
+      "section": "7.11",
+      "title": "try-optional-nil: 補助の関数 parse の行",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "noCandidates": [
+        "TN-parse"
+      ],
+      "mutants": [
+        {
+          "marker": "TN-parse-return",
+          "operator": "return-value",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "TN1",
+      "section": "7.11",
+      "title": "try-optional-nil: try? の結果を使う（成功する入力でテストしている）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "TN1",
+          "operator": "try-optional-nil",
+          "expected": "Killed"
+        },
+        {
+          "marker": "TN1-return",
+          "operator": "return-value",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "TN2",
+      "section": "7.11",
+      "title": "try-optional-nil: 失敗する入力しか渡さないので区別できない（生き残る）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "TN2",
+          "operator": "try-optional-nil",
+          "expected": "Survived"
+        },
+        {
+          "marker": "TN2",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "TN2-return",
+          "operator": "return-value",
+          "expected": "NotReached",
+          "note": "テストは失敗する入力しか渡さないので、この return は実行されない"
+        }
+      ]
+    },
+    {
+      "id": "TN3",
+      "section": "7.11",
+      "title": "try-optional-nil: _ = try? … は文の削除と同じなので作らない",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "TN3-discard",
+          "operator": "side-effect-removal",
+          "expected": "Survived",
+          "note": "結果を捨てる呼び出しで、効果も無い"
+        },
+        {
+          "marker": "TN3-return",
+          "operator": "boolean-literal",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "TN4",
+      "section": "7.11",
+      "title": "try-optional-nil: 値を返す関数の本体が式1つ（暗黙の return）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "TN4",
+          "operator": "try-optional-nil",
+          "expected": "Killed"
+        },
+        {
+          "marker": "TN4",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return"
+        }
+      ]
+    },
+    {
+      "id": "CC1",
+      "section": "7.11",
+      "title": "guard-removal: 条件が1つの guard → true（早期 return の結果をテストが確かめる）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "CC1",
+          "operator": "guard-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CC1",
+          "operator": "boundary",
+          "expected": "Survived",
+          "note": "half(0) はどちらでも 0（等価）"
+        },
+        {
+          "marker": "CC1-return",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CC1-return",
+          "operator": "arithmetic",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "CC2",
+      "section": "7.11",
+      "title": "guard-removal: 早期 return の結果が続きを実行した結果と同じ（等価。既定で無効にしている理由）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "CC2",
+          "operator": "guard-removal",
+          "expected": "Survived"
+        },
+        {
+          "marker": "CC2",
+          "operator": "equality-flip",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CC2-return",
+          "operator": "return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CC2-return",
+          "operator": "arithmetic",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "CC3",
+      "section": "7.11",
+      "title": "condition-constant: if → false（条件が複数のときは最後の式の条件だけ）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "CC3",
+          "operator": "condition-removal",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "CC3",
+          "operator": "condition-negation",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CC3",
+          "operator": "condition-removal",
+          "occurrence": 2,
+          "expected": "Killed"
+        },
+        {
+          "marker": "CC3",
+          "operator": "condition-constant",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CC3",
+          "operator": "boundary",
+          "expected": "Survived",
+          "note": "n == 0 のとき result を 0 にしても同じ（等価）"
+        },
+        {
+          "marker": "CC3-return",
+          "operator": "return-value",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "DC1",
+      "section": "7.11",
+      "title": "無効化コメント: 演算子を指定する（boundary だけ無効）",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "DC1",
+          "operator": "operand-removal",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "DC1",
+          "operator": "boundary",
+          "expected": "Ignored",
+          "reason": "disabled-by-comment"
+        },
+        {
+          "marker": "DC1",
+          "operator": "logical-connector",
+          "expected": "Killed"
+        },
+        {
+          "marker": "DC1",
+          "operator": "operand-removal",
+          "occurrence": 2,
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "DC2",
+      "section": "7.11",
+      "title": "無効化コメント: 知らない演算子名は警告になり、何も無効にしない",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "DC2",
+          "operator": "boundary",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "DC3",
+      "section": "7.11",
+      "title": "無効化コメント: ブロックで演算子を指定し、enable で戻す",
+      "file": "SampleApp/Operators/BodyAndConditionCases.swift",
+      "mutants": [
+        {
+          "marker": "DC3-disabled",
+          "operator": "operand-removal",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "DC3-disabled",
+          "operator": "boundary",
+          "occurrence": 1,
+          "expected": "Ignored",
+          "reason": "disabled-by-comment"
+        },
+        {
+          "marker": "DC3-disabled",
+          "operator": "logical-connector",
+          "expected": "Ignored",
+          "reason": "disabled-by-comment"
+        },
+        {
+          "marker": "DC3-disabled",
+          "operator": "operand-removal",
+          "occurrence": 2,
+          "expected": "Killed"
+        },
+        {
+          "marker": "DC3-disabled",
+          "operator": "boundary",
+          "occurrence": 2,
+          "expected": "Ignored",
+          "reason": "disabled-by-comment"
+        },
+        {
+          "marker": "DC3-enabled",
+          "operator": "operand-removal",
+          "occurrence": 1,
+          "expected": "Killed"
+        },
+        {
+          "marker": "DC3-enabled",
+          "operator": "logical-connector",
+          "expected": "Killed"
+        },
+        {
+          "marker": "DC3-enabled",
+          "operator": "operand-removal",
+          "occurrence": 2,
+          "expected": "Killed"
+        },
+        {
+          "marker": "DC3-enabled",
+          "operator": "equality-flip",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "RC1",
+      "section": "11",
+      "title": "return-case: 引数付きの case を返す return を、同じ関数が返す別の値にする（テストあり）",
+      "file": "SampleApp/Operators/ReturnAndClosureCases.swift",
+      "mutants": [
+        {
+          "marker": "RC1-guard",
+          "operator": "negation-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "RC1-guard",
+          "operator": "guard-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "RC1-invalid",
+          "operator": "return-case",
+          "expected": "Killed",
+          "note": ".missing への置き換え。.found(value) は局所変数を使うので置き換え先にならない"
+        },
+        {
+          "marker": "RC1-found",
+          "operator": "return-case",
+          "expected": "Killed",
+          "occurrence": 1,
+          "note": ".invalid(\"empty\") への置き換え"
+        },
+        {
+          "marker": "RC1-found",
+          "operator": "return-case",
+          "expected": "Killed",
+          "occurrence": 2,
+          "note": ".missing への置き換え"
+        }
+      ]
+    },
+    {
+      "id": "RC2",
+      "section": "11",
+      "title": "return-case: テストが「見つからない、ではない」ことしか確かめない",
+      "file": "SampleApp/Operators/ReturnAndClosureCases.swift",
+      "mutants": [
+        {
+          "marker": "RC2-if",
+          "operator": "condition-constant",
+          "expected": "Survived",
+          "note": "負の値のテストが無い"
+        },
+        {
+          "marker": "RC2-if",
+          "operator": "boundary",
+          "expected": "Survived",
+          "note": "0 のテストが無い"
+        },
+        {
+          "marker": "RC2-invalid",
+          "operator": "return-case",
+          "expected": "NotReached",
+          "note": "負の値のテストが無いので実行されない"
+        },
+        {
+          "marker": "RC2-found",
+          "operator": "return-case",
+          "expected": "Killed",
+          "occurrence": 1,
+          "note": ".missing への置き換え"
+        },
+        {
+          "marker": "RC2-found",
+          "operator": "return-case",
+          "expected": "Survived",
+          "occurrence": 2,
+          "note": ".invalid(\"negative\") への置き換え。テストは .missing でないことしか見ない"
+        }
+      ]
+    },
+    {
+      "id": "IR1",
+      "section": "11",
+      "title": "implicit-return-value: 式1つの本体の値を、戻り値の型から作れる値にする",
+      "file": "SampleApp/Operators/ReturnAndClosureCases.swift",
+      "mutants": [
+        {
+          "marker": "IR1-array",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "IR1-array",
+          "operator": "arithmetic",
+          "expected": "Killed"
+        },
+        {
+          "marker": "IR1-array",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return"
+        },
+        {
+          "marker": "IR2-optional",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "IR3-untested",
+          "operator": "implicit-return-value",
+          "expected": "Survived",
+          "note": "テストは呼ぶだけで値を確かめない"
+        }
+      ]
+    },
+    {
+      "id": "CS1",
+      "section": "11",
+      "title": "closure-statement-removal: forEach のクロージャの中の文",
+      "file": "SampleApp/Operators/ReturnAndClosureCases.swift",
+      "mutants": [
+        {
+          "marker": "CS1-forEach",
+          "operator": "side-effect-removal",
+          "expected": "Killed",
+          "note": "forEach の文ごと消す（従来からある書き換え）"
+        },
+        {
+          "marker": "CS1-forEach",
+          "operator": "closure-statement-removal",
+          "expected": "Killed",
+          "note": "クロージャの中の result.append($0) を消す"
+        },
+        {
+          "marker": "CS1-return",
+          "operator": "return-value",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "CS2",
+      "section": "11",
+      "title": "closure-statement-removal: return・guard のあるクロージャ（Muter のサンプルにある形）",
+      "file": "SampleApp/Operators/ReturnAndClosureCases.swift",
+      "mutants": [
+        {
+          "marker": "CS2-guard",
+          "operator": "guard-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS2-guard",
+          "operator": "boundary",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS2-guard",
+          "operator": "loop-control",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS2-append",
+          "operator": "closure-statement-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS2-empty",
+          "operator": "condition-negation",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS2-empty",
+          "operator": "condition-constant",
+          "expected": "Survived",
+          "note": "等価: nil を返さなくても、空の配列が ?? [] と同じ結果になる"
+        },
+        {
+          "marker": "CS2-return",
+          "operator": "return-value",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "CS3",
+      "section": "11",
+      "title": "closure-statement-removal: 1文だけで値かもしれないクロージャ（map）は候補にしない",
+      "file": "SampleApp/Operators/ReturnAndClosureCases.swift",
+      "mutants": [
+        {
+          "marker": "CS3-map",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS3-map",
+          "operator": "side-effect-removal",
+          "expected": "Ignored",
+          "reason": "implicit-return"
+        },
+        {
+          "marker": "CS3-transform",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS3-transform",
+          "operator": "arithmetic",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "CS4",
+      "section": "11",
+      "title": "closure-statement-removal: クロージャの中のロックの呼び出しは理由付きで除外する",
+      "file": "SampleApp/Operators/ReturnAndClosureCases.swift",
+      "mutants": [
+        {
+          "marker": "CS4-forEach",
+          "operator": "side-effect-removal",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS4-lock",
+          "operator": "closure-statement-removal",
+          "expected": "Ignored",
+          "reason": "synchronization"
+        },
+        {
+          "marker": "CS4-sum",
+          "operator": "compound-assignment",
+          "expected": "Killed"
+        },
+        {
+          "marker": "CS4-unlock",
+          "operator": "closure-statement-removal",
+          "expected": "Ignored",
+          "reason": "synchronization"
+        },
+        {
+          "marker": "CS4-return",
+          "operator": "return-value",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "IR5",
+      "section": "11",
+      "title": "implicit-return-value: 既存のケースにある式1つの本体（どれも値を確かめるテストがある）",
+      "file": "(複数)",
+      "mutants": [
+        {
+          "marker": "L1",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "L1-trim",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "IR-repository-count",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SE-continuation",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "IR-wrapped-get",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "IR-projected",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "D1",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SE-abs",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "E1",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "E2",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T2",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T3-nested",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "T10",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "X12",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "X3",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N3-sorted",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "N3-map",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "O5-trim",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "SE-buildBlock",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "IR-buildExpression",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "IR-buildOptional",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        },
+        {
+          "marker": "S8",
+          "operator": "implicit-return-value",
+          "expected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "CS5",
+      "section": "11",
+      "title": "closure-statement-removal: DispatchQueue.main.async のクロージャ（1文）",
+      "file": "SampleApp/Nested/NestedCases.swift",
+      "mutants": [
+        {
+          "marker": "N13",
+          "operator": "closure-statement-removal",
+          "expected": "Killed",
+          "note": "completion が呼ばれず、テストの待ち（5 秒）が失敗する"
+        }
+      ]
+    },
+    {
+      "id": "U1",
+      "section": "11",
+      "title": "ユニットテストのターゲットが2つ: ターゲット A のテストだけが検出する",
+      "file": "SampleApp/Units/UnitCases.swift",
+      "mutants": [
+        {
+          "marker": "U1",
+          "operator": "boundary",
+          "expected": "NotReached",
+          "unitsExpected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "U2",
+      "section": "11",
+      "title": "ターゲット B のテストだけが検出する（A は呼ぶが値を確かめない）",
+      "file": "SampleApp/Units/UnitCases.swift",
+      "mutants": [
+        {
+          "marker": "U2",
+          "operator": "return-value",
+          "expected": "NotReached",
+          "unitsExpected": "Killed"
+        },
+        {
+          "marker": "U2",
+          "operator": "min-max",
+          "expected": "NotReached",
+          "unitsExpected": "Killed"
+        }
+      ]
+    },
+    {
+      "id": "U3",
+      "section": "11",
+      "title": "テスト計画の構成が2つ（日本語・英語）: 片方の構成でだけ実行・検出される",
+      "file": "SampleApp/Units/UnitCases.swift",
+      "mutants": [
+        {
+          "marker": "U3-if",
+          "operator": "condition-negation",
+          "expected": "NotReached",
+          "unitsExpected": "Killed"
+        },
+        {
+          "marker": "U3-if",
+          "operator": "condition-constant",
+          "expected": "NotReached",
+          "unitsExpected": "Killed",
+          "note": "英語の構成では等価（どちらも yes を返す）。日本語の構成でだけ検出される"
+        },
+        {
+          "marker": "U3-ja",
+          "operator": "return-value",
+          "expected": "NotReached",
+          "unitsExpected": "Killed",
+          "note": "日本語の構成でだけ実行される。英語の構成の共有プロセスでは未到達"
+        },
+        {
+          "marker": "U3-en",
+          "operator": "return-value",
+          "expected": "NotReached",
+          "unitsExpected": "Killed",
+          "note": "英語の構成でだけ実行される"
+        },
+        {
+          "marker": "U3-lang",
+          "operator": "boolean-literal",
+          "expected": "NotReached",
+          "unitsExpected": "NotReached",
+          "note": "?? の右は、左が nil のときだけ評価される。優先言語の一覧は空にならないので、スイッチは一度も評価されない"
+        }
+      ]
+    },
+    {
+      "id": "U4",
+      "section": "11",
+      "title": "どちらのターゲットも実行するが、空でないことしか確かめない",
+      "file": "SampleApp/Units/UnitCases.swift",
+      "mutants": [
+        {
+          "marker": "U4",
+          "operator": "return-value",
+          "expected": "NotReached",
+          "unitsExpected": "Killed"
+        },
+        {
+          "marker": "U4",
+          "operator": "boundary",
+          "expected": "NotReached",
+          "unitsExpected": "Survived"
+        },
+        {
+          "marker": "U4",
+          "operator": "ternary-swap",
+          "expected": "NotReached",
+          "unitsExpected": "Survived"
+        }
+      ]
+    },
+    {
+      "id": "U5",
+      "section": "11",
+      "title": "どのテストも実行しない",
+      "file": "SampleApp/Units/UnitCases.swift",
+      "mutants": [
+        {
+          "marker": "U5",
+          "operator": "equality-flip",
+          "expected": "NotReached",
+          "unitsExpected": "NotReached"
+        }
+      ]
+    },
+    {
+      "id": "U6",
+      "section": "11",
+      "title": "共有プロセスをクラッシュさせるミュータントと、その後ろのミュータント",
+      "file": "SampleApp/Units/UnitCases.swift",
+      "mutants": [
+        {
+          "marker": "U6",
+          "operator": "boundary",
+          "expected": "NotReached",
+          "unitsExpected": "Killed",
+          "unitsKillKind": "crash",
+          "note": "範囲外の添字でクラッシュする。共有プロセスが落ち、1件だけの実行で Crash と判定される"
+        },
+        {
+          "marker": "U6-add",
+          "operator": "compound-assignment",
+          "expected": "NotReached",
+          "unitsExpected": "Killed"
+        },
+        {
+          "marker": "U6-return",
+          "operator": "return-value",
+          "expected": "NotReached",
+          "unitsExpected": "Killed"
+        }
+      ]
+    }
+  ],
+  "baseline": [
+    {
+      "id": "X4",
+      "title": "XCTExpectFailure / withKnownIssue を含む成功するテスト",
+      "tests": [
+        "SampleAppTests/XCTestOnlyTests/testX4ExpectFailure()",
+        "SampleAppTests/SwiftTestingOnlyTests/x4KnownIssue()"
+      ],
+      "expected": "Passed"
+    },
+    {
+      "id": "X5",
+      "title": "ログに fatal error という文字列を出す成功テスト（#189）",
+      "tests": [
+        "SampleAppTests/XCTestOnlyTests/testX5FatalErrorStringInLog()"
+      ],
+      "expected": "Passed"
+    },
+    {
+      "id": "X6",
+      "title": "UI テストターゲット",
+      "tests": [
+        "SampleAppUITests"
+      ],
+      "expected": "Passed",
+      "note": "ベースラインでは成功する。ミュータントの実行には含めない"
+    },
+    {
+      "id": "X9",
+      "title": "SWIFT_TREAT_WARNINGS_AS_ERRORS=YES のターゲット",
+      "expected": "BuildSucceeded",
+      "note": "アプリのターゲットは警告をエラーにする設定。上書きしなくても、埋め込んだ版がビルドできること"
+    }
+  ],
+  "units": {
+    "note": "スキーム SampleAppUnits（テスト計画 Units.xctestplan: 構成 Japanese・English、ターゲット SampleAppUnitATests・SampleAppUnitBTests）で SampleApp/Units/UnitCases.swift だけを実行したときの期待。各ミュータントの unitsExpected（と unitsKillKind）で照合する。scripts/verify-fixture-units.sh が使う",
+    "buildCount": 1,
+    "compileErrors": 0,
+    "phantoms": 0,
+    "warningKinds": []
+  }
+}

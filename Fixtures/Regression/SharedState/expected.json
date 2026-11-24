@@ -1,0 +1,13 @@
+{
+  "comment": "With --shared-process, the mutant that removes clear() leaves items in the process and the next mutant fails testAddA once. With --workers on macOS, the processes collide on the lock file. In every mode: three mutants of Store are Killed, everything else survives.",
+  "statuses": {
+    "Store.add(_:)::side-effect-removal": "Killed",
+    "Store.count(of:)::return-value": "Killed",
+    "Store.count(of:)::equality-flip": "Killed",
+    "Store.clear()::side-effect-removal": "Survived",
+    "Calc.over1(_:)::boundary": "Survived",
+    "Calc.over2(_:)::boundary": "Survived",
+    "Calc.over3(_:)::boundary": "Survived"
+  },
+  "warnings": []
+}

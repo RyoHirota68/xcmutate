@@ -1,0 +1,10 @@
+{
+  "comment": "The documented limit of a detection by narrowed tests (docs/usage.md, 'What narrowing assumes'): --select-tests reach without --shared-process runs the suite of the price by itself, where no custom threshold is set, and the two mutants of threshold() fail it. They are reported as Killed, marked as detected by narrowed tests alone; a run of all tests lets them survive (expected.json). --confirm-kills full is what closes it.",
+  "statuses": {
+    "threshold()::boundary": "Killed",
+    "threshold()::ternary-swap": "Killed",
+    "isExpensive(_:)::boundary": "Survived"
+  },
+  "narrowedDetections": ["threshold()::boundary", "threshold()::ternary-swap"],
+  "noWarnings": ["dependentTests", "stateLeak", "runnerError"]
+}

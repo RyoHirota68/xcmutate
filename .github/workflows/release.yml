@@ -1,0 +1,89 @@
+# Builds the release archive (a universal executable for arm64 and x86_64), attaches it to the GitHub release of
+# the tag, and writes the Homebrew formula for it.
+#
+# Starts on a tag v<version>, or by hand for an existing tag. NOT VERIFIED: this workflow has not completed on a
+# GitHub runner yet. scripts/make-release.sh makes and checks the same archive on a Mac without GitHub.
+#
+# The tap: when the repository variable HOMEBREW_TAP (<owner>/homebrew-<name>) and the secret HOMEBREW_TAP_TOKEN
+# (a token that may push to it) are both set, the formula is committed to Formula/xcmutate.rb of the tap. Without
+# them the formula is only attached to the release, to be copied by hand.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build, e.g. v0.13.0"
+        required: true
+      runner:
+        description: "Runner label (must provide an Xcode with Swift 6.3 or later)"
+        required: false
+        default: ""
+      xcode:
+        description: "Xcode version to select, e.g. 27.2 (empty: the runner's default)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write            # to create the release and attach the archive
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runner || vars.CI_RUNNER || 'macos-latest' }}
+    timeout-minutes: 60
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      XCODE_VERSION: ${{ inputs.xcode || vars.CI_XCODE || '' }}
+      OWNER: ${{ github.repository_owner }}
+      HOMEBREW_TAP: ${{ vars.HOMEBREW_TAP }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Select Xcode
+        if: env.XCODE_VERSION != ''
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+
+      - name: The tag must be the version of the sources
+        run: |
+          version="$(sed -n 's/.*static let version = "\(.*\)"/\1/p' Sources/MutatorRunner/ToolInfo.swift)"
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::the tag is $TAG, the sources say version $version (Sources/MutatorRunner/ToolInfo.swift)"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        run: swift test
+
+      - name: Build and check the archive
+        run: scripts/make-release.sh
+
+      - name: Create the release and attach the archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd .build/release-artifacts
+          notes="$(awk -v version="$VERSION" 'index($0, "## " version) == 1 || index($0, "## [" version) == 1 { found = 1; next } found && /^## / { exit } found { print }' ../../CHANGELOG.md)"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "xcmutate $VERSION" --notes "${notes:-See CHANGELOG.md.}" --verify-tag
+          fi
+          gh release upload "$TAG" "xcmutate-$VERSION-macos-universal.tar.gz" "xcmutate-$VERSION-macos-universal.tar.gz.sha256" xcmutate.rb --clobber
+
+      - name: Update the Homebrew tap
+        if: env.HOMEBREW_TAP != '' && env.HOMEBREW_TAP_TOKEN != ''
+        run: |
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP}.git" "$RUNNER_TEMP/tap"
+          mkdir -p "$RUNNER_TEMP/tap/Formula"
+          cp .build/release-artifacts/xcmutate.rb "$RUNNER_TEMP/tap/Formula/xcmutate.rb"
+          cd "$RUNNER_TEMP/tap"
+          # The account that started the release, with GitHub's address that hides the real one
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+          git add Formula/xcmutate.rb
+          git diff --cached --quiet || git commit -m "xcmutate $VERSION"
+          git push

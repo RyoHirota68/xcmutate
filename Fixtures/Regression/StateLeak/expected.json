@@ -1,0 +1,8 @@
+{
+  "comment": "The run of the mutant in parse leaves a file behind. Without the run of the tests without mutants after it, the mutant in isLarge is reported as Killed by that file.",
+  "statuses": {
+    "Leak.parse(_:)::return-value": "Killed",
+    "Leak.isLarge(_:)::boundary": "Survived"
+  },
+  "warnings": ["stateLeak"]
+}

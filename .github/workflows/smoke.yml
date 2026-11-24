@@ -1,0 +1,65 @@
+# One short run of the tool on a GitHub-hosted macOS runner, started by hand: the action builds the tool from the
+# sources of this checkout, runs it on the smallest fixture package (Fixtures/LogicKit, 23 mutants, macOS, about
+# 15 s of mutation testing), and the verdicts are compared with those of the same run on a Mac with Xcode 27.2.
+# It answers one question: does a run work with the Xcode of the runner image. It does not run `swift test`.
+name: Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          ls /Applications | grep -i xcode
+
+      - name: Run xcmutate through the action
+        id: mutation
+        uses: ./
+        with:
+          package: Fixtures/LogicKit
+          scheme: LogicKit
+          destination: platform=macOS
+          since: none
+          shared-process: "true"
+          report-directory: mutation-report
+          artifact-name: ""
+          args: |
+            --root
+            Fixtures/LogicKit
+
+      - name: Compare the verdicts with the expected ones
+        if: always()
+        env:
+          EXIT_CODE: ${{ steps.mutation.outputs.exit-code }}
+          SCORE: ${{ steps.mutation.outputs.score }}
+          UNDETECTED: ${{ steps.mutation.outputs.undetected }}
+          REPORT: ${{ steps.mutation.outputs.report }}
+        run: |
+          echo "outputs of the action: exit-code=$EXIT_CODE score=$SCORE undetected=$UNDETECTED report=$REPORT"
+          python3 scripts/check-smoke.py mutation-report/mutation.json '{"Killed": 18, "Survived": 5, "Ignored": 1}'
+          test "$EXIT_CODE" = "0"
+          test "$UNDETECTED" = "5"
+
+      - name: Upload the reports and the logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: smoke-reports
+          path: |
+            mutation-report
+            ${{ runner.temp }}/xcmutate-work/logs
+          if-no-files-found: warn

@@ -1,0 +1,80 @@
+{
+  "comment": "A run of all tests, one process per mutant, with XCMUTATE_IGNORE_BASELINE_TEST_LINES set: the tool behaves as if no output of the baseline had shown when its tests start. The verdicts are those of expected-all-tests.json; the run must warn that the limit until the first test and the limit for one test are not in use (limitsNotInUse), the mutant with the test that does not end is a Timeout by the limit of the whole run, and a Crash is still stopped at the first crash.",
+  "statuses": {
+    "Guards.pickA(_:)::implicit-return-value": "Killed",
+    "Guards.pickA(_:)::boundary": "Crash",
+    "Guards.pickA(_:)::ternary-swap": "Crash",
+    "Guards.pickB(_:)::implicit-return-value": "Killed",
+    "Guards.pickB(_:)::boundary": "Crash",
+    "Guards.pickB(_:)::ternary-swap": "Crash",
+    "Guards.pickC(_:)::implicit-return-value": "Killed",
+    "Guards.pickC(_:)::boundary": "Crash",
+    "Guards.pickC(_:)::ternary-swap": "Crash",
+    "Guards.isExpensive(_:)::boundary": "Survived",
+    "Guards.isCheap(_:)::boundary": "Survived",
+    "Guards.threshold()::implicit-return-value": "Killed",
+    "Guards.threshold()::boundary": "Survived",
+    "Guards.threshold()::ternary-swap": "Survived",
+    "Guards.isOver(_:)::boundary": "Survived",
+    "Guards.drain(_:)::negation-removal": "Killed",
+    "Guards.drain(_:)::arithmetic": "Killed",
+    "Guards.drain(_:)::side-effect-removal": "Timeout",
+    "Guards.drain(_:)::return-value": "Killed",
+    "GuardState.ready::boolean-literal": "Survived",
+    "Guards.atLaunch(_:)::implicit-return-value": "Killed",
+    "Guards.atLaunch(_:)::boundary": "Killed",
+    "Guards.atLaunch(_:)::ternary-swap": "Killed",
+    "Guards.pickNamed(_:)::implicit-return-value": "Killed",
+    "Guards.pickNamed(_:)::boundary": "Crash",
+    "Guards.pickNamed(_:)::ternary-swap": "Crash"
+  },
+  "noWarnings": [
+    "workerDropped",
+    "runnerError",
+    "stateLeak"
+  ],
+  "details": {
+    "Guards.pickA(_:)::boundary": [
+      "the run was stopped there"
+    ],
+    "Guards.pickA(_:)::ternary-swap": [
+      "the run was stopped there"
+    ],
+    "Guards.pickB(_:)::boundary": [
+      "the run was stopped there"
+    ],
+    "Guards.pickB(_:)::ternary-swap": [
+      "the run was stopped there"
+    ],
+    "Guards.pickC(_:)::boundary": [
+      "the run was stopped there"
+    ],
+    "Guards.pickC(_:)::ternary-swap": [
+      "the run was stopped there"
+    ],
+    "Guards.drain(_:)::side-effect-removal": [
+      "exceeded"
+    ],
+    "Guards.pickNamed(_:)::boundary": [
+      "in the Swift Testing test \"picks the first entry outside the table\"; the run was stopped there"
+    ],
+    "Guards.pickNamed(_:)::ternary-swap": [
+      "in the Swift Testing test \"picks the first entry outside the table\"; the run was stopped there"
+    ]
+  },
+  "maxSeconds": {
+    "Guards.pickA(_:)::boundary": 45,
+    "Guards.pickA(_:)::ternary-swap": 45,
+    "Guards.pickB(_:)::boundary": 45,
+    "Guards.pickB(_:)::ternary-swap": 45,
+    "Guards.pickC(_:)::boundary": 45,
+    "Guards.pickC(_:)::ternary-swap": 45,
+    "Guards.drain(_:)::side-effect-removal": 90,
+    "Guards.pickNamed(_:)::boundary": 45,
+    "Guards.pickNamed(_:)::ternary-swap": 45
+  },
+  "detailsComment": "details: the detail of every mutant of the key must contain one of the texts (which limit stopped the run: without a limit inside the run a Crash is 'the test host ended unexpectedly' after every restart, and a Timeout names the limit of the whole run). maxSeconds: the mutant's time; a crash that is waited through, or a hang waited for with the limit of the whole run, takes longer.",
+  "warnings": [
+    "limitsNotInUse"
+  ]
+}

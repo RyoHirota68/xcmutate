@@ -1,0 +1,9 @@
+{
+  "comment": "What another suite leaves in the process hides the effect of the mutants in threshold(): in a run of all tests the custom threshold is set before the tests of the price run, so the default is never used and all three mutants survive. This is the verdict of one process per mutant, of --select-tests reach --shared-process (the shared process has run every test before, and a survivor is run against every test in a new process), and of --select-tests reach --confirm-kills full (a detection by narrowed tests is run against every test).",
+  "statuses": {
+    "threshold()::boundary": "Survived",
+    "threshold()::ternary-swap": "Survived",
+    "isExpensive(_:)::boundary": "Survived"
+  },
+  "noWarnings": ["dependentTests", "stateLeak", "runnerError"]
+}

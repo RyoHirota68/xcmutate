@@ -1,0 +1,14 @@
+{
+  "comment": "The same without a run of the dependent suite by itself: one process per mutant, and the default of --select-tests reach --shared-process (a survivor is run against the whole selection in a new process). All three survive, and nothing has to be said about the suite.",
+  "statuses": {
+    "Registry.ready::boolean-literal": "Survived",
+    "isExpensive(_:)::boundary": "Survived",
+    "isCheap(_:)::boundary": "Survived"
+  },
+  "noWarnings": [
+    "stateLeak",
+    "workerDropped",
+    "runnerError",
+    "dependentTests"
+  ]
+}

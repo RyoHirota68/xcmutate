@@ -1,0 +1,44 @@
+# Mutation testing of whole files on the main branch, every night. Its JSON report is the baseline that the
+# pull-request workflow compares with (docs/ci.md).
+#
+# NOT VERIFIED ON GITHUB: this workflow has not been run by a GitHub runner. The action it uses ran there once,
+# on a Swift package on macOS (docs/ci.md).
+name: Mutation testing (nightly)
+
+on:
+  schedule:
+    - cron: "0 17 * * *"           # UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    runs-on: macos-latest
+    timeout-minutes: 350           # hosted runners end a job after six hours
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/SourcePackages
+          key: source-packages-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+
+      - uses: RyoHirota68/xcmutate@v0.13.0
+        with:
+          workspace: App.xcworkspace
+          scheme: App
+          destination: platform=iOS Simulator,name=iPhone 16
+          since: none
+          files: App/Sources/Domain/*.swift App/Sources/Services/*.swift   # shell patterns, expanded in the repository root
+          select-tests: reach
+          shared-process: true
+          # Stops in time to write the report; the mutants that were not run are listed in it and are not counted
+          # as new gaps by the pull-request workflow
+          time-limit: 5h
+          artifact-name: mutation-baseline
+          package-cache: ${{ runner.temp }}/SourcePackages
+          args: |
+            --only-testing
+            AppTests

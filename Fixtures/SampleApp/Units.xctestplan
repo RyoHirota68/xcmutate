@@ -1,0 +1,40 @@
+{
+  "configurations" : [
+    {
+      "id" : "5E0F3B6A-0B5C-4E0B-9A54-6B1A7C0D1101",
+      "name" : "Japanese",
+      "options" : {
+        "language" : "ja",
+        "region" : "JP"
+      }
+    },
+    {
+      "id" : "5E0F3B6A-0B5C-4E0B-9A54-6B1A7C0D1102",
+      "name" : "English",
+      "options" : {
+        "language" : "en",
+        "region" : "US"
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:SampleApp.xcodeproj",
+        "identifier" : "D88EAC5BAE8BBC1E66A6CB85",
+        "name" : "SampleAppUnitATests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:SampleApp.xcodeproj",
+        "identifier" : "B820EFD571398C170EA245B5",
+        "name" : "SampleAppUnitBTests"
+      }
+    }
+  ],
+  "version" : 1
+}

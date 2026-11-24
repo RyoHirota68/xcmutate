@@ -1,0 +1,12 @@
+{
+  "comment": "A mutant (`n > 0` -> `n >= 0`) leaves a file behind that fails the tests of one suite, and only another suite removes it. With narrowed tests the suite was run by itself without mutants three times, failed three times, the destination was given up and the remaining mutants were RunnerError. Before a destination is given up, every test is run once without mutants. The verdicts are those of a run of all tests.",
+  "statuses": {
+    "saveCount(_:)::empty-body": "Survived",
+    "saveCount(_:)::condition-constant": "Survived",
+    "saveCount(_:)::boundary": "Killed",
+    "saveCount(_:)::side-effect-removal": "NotReached",
+    "isBig(_:)::boundary": "Survived",
+    "isSmall(_:)::boundary": "Survived"
+  },
+  "noWarnings": ["workerDropped", "runnerError", "dependentTests"]
+}

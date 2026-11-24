@@ -1,0 +1,51 @@
+{
+  "source": "muter-mutation-testing/muter (MIT License, Copyright (c) 2020 Muter), commit 5c85409",
+  "note": "Muter のユニットテスト（Tests/MutationOperators/*Tests.swift とそのスナップショット）が期待しているミュータントの位置。Muter の位置は書き換える式・文の終わりの行と列（1 始まり）。operator は Muter の名前",
+  "operatorMap": {
+    "RelationalOperatorReplacement": ["equality-flip", "boundary"],
+    "ChangeLogicalConnector": ["logical-connector"],
+    "SwapTernary": ["ternary-swap"],
+    "RemoveSideEffects": ["side-effect-removal"]
+  },
+  "files": {
+    "NegateConditionals/sampleWithConditionalOperators.swift": {
+      "test": "ROROperatorTests.test_visitor（スナップショット test_visitor.1.txt）",
+      "RelationalOperatorReplacement": [[3, 19], [4, 19], [5, 19], [6, 19], [7, 19], [8, 19], [10, 14], [14, 18], [30, 23]]
+    },
+    "NegateConditionals/conditionalConformanceConstraints.swift": {
+      "test": "ROROperatorTests.test_ignoresConditionalConformancesConstraints",
+      "RelationalOperatorReplacement": []
+    },
+    "LogicalOperator/sampleWithLogicalOperators.swift": {
+      "test": "ChangeLogicalConnectorOperatorTests.test_visitor",
+      "ChangeLogicalConnector": [[6, 18], [10, 17], [15, 18]]
+    },
+    "LogicalOperator/sampleWithFailuresParsing.swift": {
+      "test": "ChangeLogicalConnectorOperatorTests.test_sampleWithFailuresParsing（スナップショットのスイッチ）",
+      "ChangeLogicalConnector": [[55, 24]]
+    },
+    "TernaryOperator/sampleWithTernaryOperator.swift": {
+      "test": "SwapTernaryOperatorTests.test_visitor",
+      "SwapTernary": [[6, 28], [10, 32]]
+    },
+    "TernaryOperator/sampleWithNestedTernaryOperator.swift": {
+      "test": "SwapTernaryOperatorTests.test_visitor_nestedTernaryOperator",
+      "SwapTernary": [[6, 33], [6, 40]]
+    },
+    "SideEffect/sampleWithSideEffects.swift": {
+      "test": "RemoveSideEffectsOperatorTests.test_visitor",
+      "RemoveSideEffects": [[3, 27], [10, 27], [20, 62], [30, 71], [31, 70], [39, 6], [44, 19], [48, 19], [52, 19], [56, 19]]
+    }
+  },
+  "unreferenced": [
+    "LogicalOperator/sampleWithCompilerDirectives.swift",
+    "SideEffect/sampleWithConcurrency.swift",
+    "TernaryOperator/changedTernaryOperator.swift",
+    "TernaryOperator/changedNestedTernaryOperator.swift"
+  ],
+  "intendedDifferences": {
+    "SideEffect/sampleWithSideEffects.swift:30": "`let x = 呼び出し` の宣言の削除。xcmutate は宣言を削除しない（後で変数を使うとコンパイルできないため。メモ 8.2）",
+    "SideEffect/sampleWithSideEffects.swift:31": "`var x = 呼び出し` の宣言の削除。同上",
+    "SideEffect/sampleWithSideEffects.swift:10": "値を返す関数（`-> Int`）の本体の最後の文になっている呼び出し。xcmutate はこの位置の呼び出しを削除しない（理由 never-returning）。別のファイルで宣言された、戻らない（`-> Never`）関数の呼び出しかもしれず、削除すると関数全体がコンパイルできなくなるため。この入力例自体は return が無く、そのままではコンパイルできない"
+  }
+}

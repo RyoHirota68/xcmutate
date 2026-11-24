@@ -1,0 +1,11 @@
+{
+  "comment": "The mutant in reload is detected only by a test of another suite, through the limit that the test of reload leaves in the process. Every test is run for it: one process per mutant; --select-tests reach without --shared-process (a switch that one test evaluates is not narrowed); and --select-tests reach --shared-process, where it passes the suite that reaches it and is then run against every test (the default; without that run: expected-narrowed.json).",
+  "statuses": {
+    "Limits.reload(strict:)::empty-body": "Survived",
+    "Limits.reload(strict:)::ternary-swap": "Killed",
+    "isValid(_:)::boundary": "Killed"
+  },
+  "noWarnings": [
+    "survivorsNotRechecked"
+  ]
+}

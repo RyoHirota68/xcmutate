@@ -1,0 +1,10 @@
+{
+  "comment": "What --no-recheck-survivors gives up (docs/usage.md): with --shared-process the mutant in reload is run against the suite that reaches it and passes, although a test of another suite detects it when every test runs. It is reported as Survived, marked as not run against all tests, with a warning. The default runs it against every test (expected.json).",
+  "statuses": {
+    "Limits.reload(strict:)::empty-body": "Survived",
+    "Limits.reload(strict:)::ternary-swap": "Survived",
+    "isValid(_:)::boundary": "Killed"
+  },
+  "narrowedOnly": ["Limits.reload(strict:)::empty-body", "Limits.reload(strict:)::ternary-swap"],
+  "warnings": ["survivorsNotRechecked"]
+}

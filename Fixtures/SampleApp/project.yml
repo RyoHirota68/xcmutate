@@ -1,0 +1,125 @@
+# xcmutate の検証用 iOS プロジェクト。`xcodegen generate` で SampleApp.xcodeproj を生成する。
+name: SampleApp
+options:
+  bundleIdPrefix: dev.xcmutate
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+packages:
+  SampleKit:
+    path: Packages/SampleKit
+targets:
+  SampleApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: SampleApp
+    dependencies:
+      - package: SampleKit
+      - target: LegacyKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.xcmutate.SampleApp
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        # 新しい Xcode のプロジェクトの既定に合わせる（A5: 既定のアクター分離を MainActor にしたターゲット）
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        # A7: `internal import Foundation` と通常の import を混在させても曖昧さの警告を出さない
+        OTHER_SWIFT_FLAGS: "$(inherited) -enable-upcoming-feature InternalImportsByDefault"
+        # X9: 警告をエラーにする。ツールが入れたコードが警告を出さないことを確かめる
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+  # L1・L2: Swift 5 モード・InternalImportsByDefault 無し・既定のアクター分離無し・警告をエラーにする設定のフレームワーク
+  LegacyKit:
+    type: framework
+    platform: iOS
+    sources:
+      - path: LegacyKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.xcmutate.LegacyKit
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+        SKIP_INSTALL: YES
+  SampleAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SampleAppTests
+    dependencies:
+      - target: SampleApp
+      - target: LegacyKit
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.xcmutate.SampleAppTests
+        GENERATE_INFOPLIST_FILE: YES
+  # テスト計画 Units.xctestplan（構成2つ）で使う、ユニットテストのターゲット2つ
+  SampleAppUnitATests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SampleAppUnitATests
+    dependencies:
+      - target: SampleApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.xcmutate.SampleAppUnitATests
+        GENERATE_INFOPLIST_FILE: YES
+  SampleAppUnitBTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: SampleAppUnitBTests
+    dependencies:
+      - target: SampleApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.xcmutate.SampleAppUnitBTests
+        GENERATE_INFOPLIST_FILE: YES
+  SampleAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: SampleAppUITests
+    dependencies:
+      - target: SampleApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.xcmutate.SampleAppUITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: SampleApp
+schemes:
+  SampleApp:
+    build:
+      targets:
+        SampleApp: all
+        SampleAppTests: [test]
+        SampleAppUITests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - SampleAppTests
+        - SampleAppUITests
+  # 構成が2つ（日本語・英語）のテスト計画と、ユニットテストのターゲット2つ
+  SampleAppUnits:
+    build:
+      targets:
+        SampleApp: all
+        SampleAppUnitATests: [test]
+        SampleAppUnitBTests: [test]
+    test:
+      config: Debug
+      testPlans:
+        - path: Units.xctestplan
+          defaultPlan: true

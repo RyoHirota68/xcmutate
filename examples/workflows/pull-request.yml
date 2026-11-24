@@ -1,0 +1,61 @@
+# Mutation testing of the lines a pull request changes; the job fails when the pull request adds a mutant that
+# no test detects and that the main branch did not already have (docs/ci.md).
+#
+# Copy to .github/workflows/ of your project and replace the workspace, the scheme and the device name.
+# NOT VERIFIED ON GITHUB: this workflow has not been run by a GitHub runner. The action it uses ran there once,
+# on a Swift package on macOS (docs/ci.md).
+name: Mutation testing (pull request)
+
+on: pull_request
+
+permissions:
+  contents: read
+  actions: read            # to download the baseline report of the nightly workflow
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutation:
+    runs-on: macos-latest          # must provide Xcode; building the tool from the sources needs Swift 6.3 or later
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0           # the diff against the base branch needs its history
+
+      # Swift packages of the project: fetched once, then cloned into every run's build (--package-cache)
+      - uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/SourcePackages
+          key: source-packages-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+
+      # The report of the last nightly run of the main branch: what was already undetected there
+      - name: Download the baseline report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The file name of the workflow that makes the baseline (examples/workflows/nightly.yml)
+          run_id=$(gh run list --workflow nightly.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId' || true)
+          if [ -n "$run_id" ]; then gh run download "$run_id" --name mutation-baseline --dir baseline || true; fi
+          if [ ! -f baseline/mutation.json ]; then
+            # Not silently: without a baseline the gate below is another one
+            echo "::warning::No baseline report was found (no successful run of nightly.yml on main, or no artifact mutation-baseline). This run fails for every undetected mutant on the changed lines instead of only for new ones."
+          fi
+
+      - uses: RyoHirota68/xcmutate@v0.13.0
+        with:
+          workspace: App.xcworkspace
+          scheme: App
+          destination: platform=iOS Simulator,name=iPhone 16
+          # since: defaults to the base branch of the pull request
+          select-tests: reach
+          shared-process: true
+          baseline-report: ${{ hashFiles('baseline/mutation.json') != '' && 'baseline/mutation.json' || '' }}
+          fail-on-survived: ${{ hashFiles('baseline/mutation.json') == '' }}   # without a baseline: any undetected mutant on the changed lines
+          time-limit: 45m
+          package-cache: ${{ runner.temp }}/SourcePackages
+          args: |
+            --only-testing
+            AppTests

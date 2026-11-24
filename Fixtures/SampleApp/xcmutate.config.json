@@ -1,0 +1,19 @@
+{
+  "aridCalls": [
+    "FixtureAnalytics"
+  ],
+  "enabledOperators": [
+    "arithmetic",
+    "closure-statement-removal",
+    "compound-assignment",
+    "condition-removal",
+    "guard-removal",
+    "implicit-return-value",
+    "return-case",
+    "try-optional-nil"
+  ],
+  "exclude": [
+    "SampleApp/Excluded/**",
+    "!SampleApp/Excluded/Kept.swift"
+  ]
+}

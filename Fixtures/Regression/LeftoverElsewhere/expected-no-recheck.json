@@ -1,0 +1,25 @@
+{
+  "comment": "The same with --no-recheck-survivors: the survivors passed the tests that reach them and say so.",
+  "statuses": {
+    "saveCount(_:)::empty-body": "Survived",
+    "saveCount(_:)::condition-constant": "Survived",
+    "saveCount(_:)::boundary": "Killed",
+    "saveCount(_:)::side-effect-removal": "NotReached",
+    "isBig(_:)::boundary": "Survived",
+    "isSmall(_:)::boundary": "Survived"
+  },
+  "noWarnings": [
+    "workerDropped",
+    "runnerError",
+    "dependentTests"
+  ],
+  "narrowedOnly": [
+    "isBig(_:)::boundary",
+    "isSmall(_:)::boundary",
+    "saveCount(_:)::condition-constant",
+    "saveCount(_:)::empty-body"
+  ],
+  "warnings": [
+    "survivorsNotRechecked"
+  ]
+}

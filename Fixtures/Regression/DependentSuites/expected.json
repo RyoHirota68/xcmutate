@@ -1,0 +1,10 @@
+{
+  "comment": "A suite that passes in a run of all tests and fails when it is run by itself, because it needs state that another suite leaves in the process. Narrowed to that suite, a mutant's run fails with or without the mutant; the tool reported Killed for a mutant that every run of all tests lets survive, blamed the mutant for 'state left behind', and gave up the destination (RunnerError for the rest). All three mutants survive; the suite is named as one that needs other tests.",
+  "statuses": {
+    "Registry.ready::boolean-literal": "Survived",
+    "isExpensive(_:)::boundary": "Survived",
+    "isCheap(_:)::boundary": "Survived"
+  },
+  "warnings": ["dependentTests"],
+  "noWarnings": ["stateLeak", "workerDropped", "runnerError"]
+}

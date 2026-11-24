@@ -1,0 +1,26 @@
+# Mutation testing of a Swift package on macOS (no simulator): the lines a pull request changes.
+#
+# NOT VERIFIED ON GITHUB: this workflow has not been run by a GitHub runner. The action it uses ran there once,
+# on a Swift package on macOS (docs/ci.md).
+name: Mutation testing (Swift package)
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: RyoHirota68/xcmutate@v0.13.0
+        with:
+          package: .
+          scheme: MyLibrary          # see `xcodebuild -list`: the product's name, or <name>-Package with no product or several
+          destination: platform=macOS
+          fail-on-survived: true

@@ -1,0 +1,197 @@
+# GitHub Action: runs xcmutate on the repository of the calling workflow.
+#
+#   - uses: actions/checkout@v5
+#     with: { fetch-depth: 0 }
+#   - uses: RyoHirota68/xcmutate@v0.13.0
+#     with:
+#       workspace: App.xcworkspace
+#       scheme: App
+#       destination: platform=iOS Simulator,name=iPhone 16
+#       fail-on-survived: true
+#
+# What each step does is in action/*.sh, which scripts/verify-action.sh runs outside GitHub.
+# RUN ONCE ON GITHUB: on a hosted macOS runner, building the tool from source, on a Swift package on macOS.
+# Not tried there: a simulator, the release binary, the cache, pull_request events (docs/ci.md says what was checked).
+name: xcmutate
+description: Mutation testing for Swift / Xcode projects, on the lines a pull request changes or on whole files.
+author: xcmutate contributors
+branding:
+  icon: check-circle
+  color: orange
+
+inputs:
+  project:
+    description: "Xcode project (relative to the repository root). Give exactly one of project, workspace, package."
+    default: ""
+  workspace:
+    description: "Xcode workspace."
+    default: ""
+  package:
+    description: "SwiftPM package directory (for example \".\")."
+    default: ""
+  scheme:
+    description: "Scheme to build and test."
+    required: true
+  destination:
+    description: >-
+      xcodebuild destination. For an iOS simulator give "platform=iOS Simulator,name=<device name>" or "id=<UDID>":
+      the action looks up the device, boots it and passes "id=<UDID>" to the tool.
+    default: platform=macOS
+  simulator-permissions:
+    description: >-
+      Permissions to grant on the simulator before the run, one per line as "<service> <bundle id>" (the services
+      of "xcrun simctl privacy": camera, microphone, photos, location, contacts, calendar, …). On a simulator
+      that was just created the system asks with a dialog over the app, and tests wait behind it whatever the mutant.
+    default: ""
+  since:
+    description: >-
+      Only mutants on lines changed since this git ref. Empty: the base branch of the pull request (origin/<base>)
+      in a pull_request event, nothing (every mutant of the files) otherwise. "none": never restrict.
+    default: ""
+  files:
+    description: >-
+      Swift files to mutate (default all tracked Swift files outside test directories). On one line, separated
+      by spaces; or one per line, and then a path may hold spaces. Shell patterns such as Sources/Domain/*.swift
+      are expanded.
+    default: ""
+  select-tests:
+    description: "none, auto or reach (the tool's --select-tests)."
+    default: none
+  shared-process:
+    description: "true: run several mutants per test process (--shared-process)."
+    default: "false"
+  baseline-report:
+    description: "JSON report of an earlier run; the job fails (exit code 5) for mutants that are undetected now and were not then."
+    default: ""
+  fail-under:
+    description: "Fail (exit code 4) when the mutation score in percent is below this."
+    default: ""
+  fail-on-survived:
+    description: "true: fail (exit code 3) when a mutant is not detected."
+    default: "false"
+  max-mutants:
+    description: "Run at most this many mutants, chosen by their stable keys (--max-mutants)."
+    default: ""
+  time-limit:
+    description: "Stop starting mutants after this time and report what was run, for example 45m (--time-limit)."
+    default: ""
+  args:
+    description: >-
+      Further arguments for "xcmutate run", one per line. An option and its value are two arguments, so they go on
+      two lines: "--only-testing" on one line and "AppTests" on the next.
+    default: ""
+  version:
+    description: >-
+      Version of the tool: a release such as 0.13.0 (its binary is downloaded), or "source" (built from the
+      sources of the action's own ref and cached). Empty: the release of the action's ref when that is a tag
+      v<version>, the sources otherwise.
+    default: ""
+  work-dir:
+    description: "Work directory of the run (default a directory under the runner's temporary directory)."
+    default: ""
+  package-cache:
+    description: "A SourcePackages directory to seed the build with (--package-cache); see docs/ci.md."
+    default: ""
+  report-directory:
+    description: "Where the reports are written (mutation.json, mutation.md, mutation.html)."
+    default: mutation-report
+  artifact-name:
+    description: "Name of the uploaded artifact with the reports. Empty: nothing is uploaded."
+    default: mutation-report
+  annotations:
+    description: "true: undetected mutants become warnings on their source lines."
+    default: "true"
+  token:
+    description: "Token used to download the release binary."
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: "Exit code of the tool (docs/reports.md lists them)."
+    value: ${{ steps.run.outputs.exit-code }}
+  score:
+    description: "Mutation score between 0 and 1 (empty when there is none)."
+    value: ${{ steps.run.outputs.score }}
+  undetected:
+    description: "Number of mutants that were not detected (Survived and NotReached)."
+    value: ${{ steps.run.outputs.undetected }}
+  report:
+    description: "Path of the JSON report."
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Decide the version of xcmutate
+      id: tool
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+        TOOL_DIR: ${{ runner.temp }}/xcmutate-tool
+      run: '"$ACTION_PATH/action/install.sh" key'
+
+    - name: Cache the tool
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/xcmutate-tool/bin
+        key: xcmutate-tool-${{ runner.os }}-${{ runner.arch }}-${{ steps.tool.outputs.key }}
+
+    - name: Install xcmutate
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
+        TOOL_DIR: ${{ runner.temp }}/xcmutate-tool
+        GH_TOKEN: ${{ inputs.token }}
+      run: '"$ACTION_PATH/action/install.sh" install'
+
+    - name: Prepare the destination
+      id: destination
+      shell: bash
+      env:
+        INPUT_DESTINATION: ${{ inputs.destination }}
+        INPUT_SIMULATOR_PERMISSIONS: ${{ inputs.simulator-permissions }}
+      run: '"${{ github.action_path }}/action/destination.sh"'
+
+    - name: Run xcmutate
+      id: run
+      shell: bash
+      env:
+        INPUT_PROJECT: ${{ inputs.project }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        INPUT_PACKAGE: ${{ inputs.package }}
+        INPUT_SCHEME: ${{ inputs.scheme }}
+        INPUT_DESTINATION: ${{ steps.destination.outputs.destination }}
+        INPUT_SINCE: ${{ inputs.since }}
+        INPUT_FILES: ${{ inputs.files }}
+        INPUT_SELECT_TESTS: ${{ inputs.select-tests }}
+        INPUT_SHARED_PROCESS: ${{ inputs.shared-process }}
+        INPUT_BASELINE_REPORT: ${{ inputs.baseline-report }}
+        INPUT_FAIL_UNDER: ${{ inputs.fail-under }}
+        INPUT_FAIL_ON_SURVIVED: ${{ inputs.fail-on-survived }}
+        INPUT_MAX_MUTANTS: ${{ inputs.max-mutants }}
+        INPUT_TIME_LIMIT: ${{ inputs.time-limit }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_WORK_DIR: ${{ inputs.work-dir || format('{0}/xcmutate-work', runner.temp) }}
+        INPUT_PACKAGE_CACHE: ${{ inputs.package-cache }}
+        INPUT_REPORT_DIRECTORY: ${{ inputs.report-directory }}
+        INPUT_ANNOTATIONS: ${{ inputs.annotations }}
+      run: '"${{ github.action_path }}/action/run.sh"'
+
+    - name: Upload the reports
+      if: always() && inputs.artifact-name != ''
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.report-directory }}
+        if-no-files-found: ignore
+
+    - name: Result
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+      run: '"${{ github.action_path }}/action/result.sh"'
