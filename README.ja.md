@@ -1,7 +1,7 @@
 # xcmutate
 
 [![最新のリリース](https://img.shields.io/github/v/release/RyoHirota68/xcmutate)](https://github.com/RyoHirota68/xcmutate/releases)
-[![CI](https://github.com/RyoHirota68/xcmutate/actions/workflows/ci.yml/badge.svg)](https://github.com/RyoHirota68/xcmutate/actions/workflows/ci.yml)
+[![CI](https://github.com/RyoHirota68/xcmutate/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/RyoHirota68/xcmutate/actions/workflows/ci.yml)
 [![Xcode 26.6 と 27.2 で確認済み](https://img.shields.io/badge/verified%20with-Xcode%2026.6%20%7C%2027.2-blue)](docs/install.md#what-you-need)
 [![テストの実行先は macOS と iOS シミュレータ](https://img.shields.io/badge/tests%20on-macOS%20%7C%20iOS%20Simulator-blue)](docs/install.md#what-you-need)
 [![ライセンス: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
