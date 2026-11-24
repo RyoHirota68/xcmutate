@@ -11,7 +11,8 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # Only version tags (v0.13.0), not other tags such as v0
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
     inputs:
       tag:
