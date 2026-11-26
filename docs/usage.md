@@ -84,7 +84,7 @@ Target and build:
 |--------|---------|
 | `--root <dir>` | Directory to copy and mutate. Default: the git top-level directory of the current directory |
 | `--project <path>` / `--workspace <path>` | Xcode project or workspace, relative to the current directory |
-| `--package <dir>` | SwiftPM package directory. `xcodebuild` runs there without `-project` / `-workspace`. If the directory also contains an `.xcodeproj`, `xcodebuild` prefers it; move it away in the copy with `--prepare 'mv X.xcodeproj X.xcodeproj.disabled'` |
+| `--package <dir>` | SwiftPM package directory. `xcodebuild` runs there without `-project` / `-workspace`. When it is a subdirectory of the repository and neither `--root` nor file arguments are given, only the Swift files below it are mutated (also with `--since`); the root, and with it the paths, the keys, the accepted file and the config file, stays the top of the repository. If the directory also contains an `.xcodeproj`, `xcodebuild` prefers it; move it away in the copy with `--prepare 'mv X.xcodeproj X.xcodeproj.disabled'` |
 | `--scheme <name>` | Scheme to build and test (required). `xcodebuild -list` shows the schemes. For a Swift package it is usually the product's name when the package declares exactly one product, and `<package name>-Package` when it declares none or several |
 | `--destination <value>` | `xcodebuild -destination` value: `'id=<UDID>'`, `'platform=macOS'`. Repeatable: one worker per destination; the build and the baseline use the first |
 | `--test-plan <name>` | Test plan |
@@ -122,9 +122,10 @@ Execution:
 
 | Option | Meaning |
 |--------|---------|
-| `--shared-process` | Run several mutants in one test process ([Running faster](#running-faster)). Off by default |
+| `--shared-process` | Run several mutants in one test process ([Running faster](#running-faster)). Off by default. `--shared-process auto`: only when the baseline's times say that it saves time for the number of mutants |
 | `--trust-shared-survivors` | With `--shared-process`: report a mutant whose tests passed in a shared process as Survived without the run in a new process. Can report survivors that a clean process kills |
 | `--no-direct-launch` | With `--shared-process`: let `xcodebuild` start every test process |
+| `--no-narrow-gate` | With `--shared-process` and `--select-tests reach`: run all selected tests in both runs without mutants at the start of a shared process, not only the mutants' suites in the second |
 | `--workers <n>` | Number of destinations that run mutants at the same time ([Running faster](#running-faster)). Default: the number of `--destination` options |
 | `--reuse` | Do not run mutants that an earlier run found Killed, while nothing that the result rests on has changed ([Reusing results](#reusing-results)). Off by default |
 | `--confirm-kills auto\|all\|none\|full` | How far the tool goes to make sure that a failing run is caused by the mutant ([Failures caused by state left behind](#failures-caused-by-state-left-behind)). Default `auto` |
@@ -134,7 +135,7 @@ Execution:
 | `--keep-results` | Keep the `.xcresult` bundle of every mutant |
 | `--no-caffeinate` | Do not keep the Mac awake |
 
-Output and gates are described in [reports.md](reports.md): `--reporter <format>`, `--report <format>:<path>`, `--json-output <path>`, `--fail-under <percent>`, `--fail-on-survived` and `--baseline-report <path>`.
+Output and gates are described in [reports.md](reports.md): `--reporter <format>`, `--report <format>:<path>`, `--json-output <path>`, `--progress-file <path>` (the progress of the run, line by line, for a program or a coding agent), `--fail-under <percent>`, `--fail-on-survived` and `--baseline-report <path>`.
 
 ### Selecting tests
 
@@ -209,7 +210,7 @@ xcmutate run --since origin/main --workspace App.xcworkspace --scheme App \
   --destination 'id=<SIMULATOR-UDID>' --only-testing AppTests --shared-process
 ```
 
-The tool compiles a small driver and starts your test host with it. Nothing is added to your test target. The driver runs your tests twice without any mutant; both runs must pass with the baseline's number of tests. Then, for each mutant, it switches the mutant on, runs its tests, and switches it off. After a failing run it runs the same tests once more without the mutant.
+The tool compiles a small driver and starts your test host with it. Nothing is added to your test target. The driver runs your tests twice without any mutant; both runs must pass with the baseline's number of tests. With `--select-tests reach` the second of them runs only the suites that the process's mutants reach, and the run says so (`--no-narrow-gate` makes both runs of all tests; [how-it-works.md](how-it-works.md#several-mutants-in-one-process---shared-process) says why this does not change verdicts). Then, for each mutant, it switches the mutant on, runs its tests, and switches it off. After a failing run it runs the same tests once more without the mutant.
 
 | In the shared process | Result |
 |---|---|
@@ -230,7 +231,19 @@ When crashes and hangs cost more shared processes than kills save, the tool runs
 
 By default the tool starts the test host itself, without `xcodebuild`. It does so for the shared processes and for the new process that confirms a survivor. The first process it starts on a destination is a control: the tests must pass in it without mutants, in the baseline's number. If they do not, the tool goes back to `xcodebuild` for the rest of the run and reports it with the warning `directLaunchUnavailable`. The verdicts are not affected, but each survivor's second run then costs a full `xcodebuild` launch.
 
+The same happens when a process that the tool started ends while the app is in the background. A test that opens another app or a URL sends the app there. Under `xcodebuild` a test host keeps running in the background; a host started by the tool is suspended, and the system ends it when a background task of the app does not finish within about 30 seconds. The warning names the test that was running when the app went to the background.
+
 Some XCTest features need the test session of Xcode, which such a host does not have. [how-it-works.md](how-it-works.md#hosts-started-by-the-tool) lists what is known to work and describes the files that are kept when the tool could not start your host.
+
+#### `--shared-process auto`
+
+The tool decides after the baseline whether to use shared processes, and the run says which it chose and why (also in the text report and in `durations.sharedProcessChoice` of the JSON report). A shared process saves at least one launch of the test host per mutant. It costs, once per unit, a launch and the two runs of the tests without mutants at its start (with `--select-tests reach`, the second of them runs only the mutants' suites). Shared processes are used when the launches that the mutants would save are at least that cost:
+
+```
+mutants × launch  ≥  units × (2 × tests of one run without mutants + launch)
+```
+
+The launch is the time the baseline needed until its first test started. The tests of a run are those of the whole selection in the baseline, or, for the second run with `--select-tests reach`, those of the suites that reach the mutants. A run that is continued with `--resume` keeps the choice of the run it continues. [speed.md](speed.md#letting-the-tool-decide---shared-process-auto) says where the rule comes from. When shared processes are chosen, everything above applies, including the warnings.
 
 #### `--workers <n>`
 
@@ -326,7 +339,7 @@ Notes on the limits under `xcodebuild`:
 - A run that is stopped before its first test, or by the limit for one test, is repeated once before it counts as a Timeout. A host can be slow to start for reasons that have nothing to do with the mutant.
 - A run that is stopped counts as a Timeout only with the record that the mutant was evaluated while active. Otherwise it is a RunnerError.
 - A run is also stopped when `xcodebuild` writes that it restarts the host after an unexpected exit. The result is a Crash, confirmed by a second run like every Crash. It is named with the test that was running when the host ended, if the log shows exactly one. When that test had failed an assertion before the host ended, the mutant is Killed.
-- When a limit stops a run after its tests have started, the tool looks for a crash report that the host wrote during the run on that simulator. With one, the run is a Crash.
+- When a limit stops a run after its tests have started, the tool looks for a crash report that the host wrote during the run on that simulator. With one, the run is a Crash. Without one, the run is also a Crash when the log has the host's own line `*** Terminating app due to uncaught exception` (with the host's name and process ID before it) and no test started or ended after it. The `detail` of the result quotes the line.
 
 A mutant that only makes a test slow can be a Timeout too: a test that takes 0.1 s in the baseline and 40 s with the mutant is stopped by a limit of 30 s. The `detail` of a Timeout says which limit stopped the run and with which numbers. The time reported for such a mutant includes the run that was stopped and the run that was made again. If you see a Timeout that you do not believe, run that mutant alone (`--only <key>`) and raise `--timeout-constant`.
 
@@ -359,7 +372,7 @@ The work copy contains what git tracks plus untracked files that are not ignored
 - Ctrl-C, SIGTERM or SIGHUP stops the child processes, writes the reports for what has finished and exits with 130. The report has `interrupted: true` and the keys that were not run in `pendingKeys`. A second Ctrl-C exits at once.
 - `--time-limit <duration>` does the same when the time is up, counted from the start of the run. The report also has `timeLimitReached: true` and a `timeLimit` warning. The exit code is 0 without a gate. With a gate it is the code of a gate that the results so far already fail, and otherwise 7. If the time is up during the build or the baseline, there is no report and the exit code is 2.
 - `--resume` with the same options skips the recorded mutants and runs the rest. The build and the baseline are repeated. The time limit is not compared, so a run that the limit cut short can be continued with another limit, or none.
-- `--resume` is refused (exit code 2), with a message that says what changed, when the tool version, the repository state (HEAD, uncommitted changes, contents of untracked files), the list of mutants, the baseline's test count, or an option that decides results has changed. Those options are the `xcodebuild` arguments, `--prepare`, the timeouts, `--select-tests`, `--no-recheck-survivors`, `--max-mutants`, `--shared-process`, `--trust-shared-survivors`, `--no-direct-launch`, `--workers` and the destinations, `--confirm-kills`, `--reuse` and `--copy-scope`. Changes to files that git ignores, and the Xcode version, are not covered.
+- `--resume` is refused (exit code 2), with a message that says what changed, when the tool version, the repository state (HEAD, uncommitted changes, contents of untracked files), the list of mutants, the baseline's test count, or an option that decides results has changed. Those options are the `xcodebuild` arguments, `--prepare`, the timeouts, `--select-tests`, `--no-recheck-survivors`, `--max-mutants`, `--shared-process` (and `auto`), `--trust-shared-survivors`, `--no-direct-launch`, `--no-narrow-gate`, `--workers` and the destinations, `--confirm-kills`, `--reuse` and `--copy-scope`. Changes to files that git ignores, and the Xcode version, are not covered.
 - `run` takes a lock on its work directory. A second run with the same work directory stops with exit code 2 and names the process that holds it. Give parallel runs of one checkout a `--work-dir` each.
 
 ## accept
@@ -401,11 +414,12 @@ xcmutate list --show-ignored Sources/Foo.swift Sources/Bar.swift   # mutants and
 xcmutate list --keys Sources/Foo.swift                             # with the stable key of each mutant
 xcmutate list --format json Sources/*.swift
 xcmutate list --since origin/main                                  # the files that changed since the ref
+xcmutate list --since origin/main --package Shop                   # only those below the package directory, as run --package Shop
 xcmutate instrument --output-dir <dir> --manifest <dir>/mutants.json Sources/*.swift
 xcmutate instrument --in-place --manifest mutants.json Sources/*.swift   # use on a copy
 ```
 
-- `instrument` needs file arguments. `list` needs file arguments or `--since <ref>`; with `--since` alone it looks at the files that `run --since` would mutate. It cannot list a whole project.
+- `instrument` needs file arguments. `list` needs file arguments or `--since <ref>`; with `--since` alone it looks at the files that `run --since` would mutate. Give `list` the same `--package` as `run`: a subdirectory limits those files to the ones below it, as for `run`. It cannot list a whole project.
 - Paths and stable keys are relative to `--root`, and the config file is looked up there. The default root is the same as for `run`.
 - Without a destination, both also make the mutants of every branch of `#if os(…)`. `run` leaves out the branches that its destination does not compile.
 - `instrument` verifies before writing: exactly one switch per mutant id, no syntax error, the same number of lines as before. A file that fails is not written, and the exit code is 2.

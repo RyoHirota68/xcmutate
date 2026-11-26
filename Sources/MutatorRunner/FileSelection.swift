@@ -36,6 +36,16 @@ public enum FileSelector {
     public struct Selection: Sendable {
         public var included: [String]
         public var excluded: [ExcludedFile]
+
+        /// Only the files below `directory` (a path relative to the root, as the files are). `run --package <dir>` with
+        /// a subdirectory and no `--root`: the root stays the git top level, so the keys, the accepted file, the
+        /// config file and the work directory are those of a run without the narrowing.
+        public func narrowed(to directory: String) -> Selection {
+            let trimmed = directory.hasSuffix("/") ? String(directory.dropLast()) : directory
+            guard !trimmed.isEmpty, trimmed != "." else { return self }
+            let prefix = trimmed + "/"
+            return Selection(included: included.filter { $0.hasPrefix(prefix) }, excluded: excluded.filter { $0.file.hasPrefix(prefix) })
+        }
     }
 
     static let skippedDirectories: Set<String> = [".build", "DerivedData", ".swiftpm", "Pods", "Carthage"]

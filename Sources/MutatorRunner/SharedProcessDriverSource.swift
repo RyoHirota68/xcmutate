@@ -28,6 +28,7 @@ import MutatorCore
 ///     SINGLE <pass|fail|error> <tests> <seconds>[\t<failed test>…]   (plan mode `single`: one run of the tests, nothing else)
 ///     STOP <reason>
 ///     DONE
+///     NOTE background|foreground <seconds since 1970>[\t<test>]           (a host started by the tool went out of / back to the front; the test that started last)
 ///
 /// Two ways into the driver:
 /// - `xcodebuild`, or the `xctest` agent started by the tool itself, runs the one XCTest test of the bundle;
@@ -90,6 +91,10 @@ enum SharedProcessDriverSource {
         var controlTests: Int?
         /// Plan mode `single`: stop after the first test that fails (the tool takes only a pass from such a run).
         var stopAtFirstFailure: Bool?
+        /// The second of the two runs without mutants at the start runs only these tests (the suites of every mutant
+        /// of the plan), and must run `gateTests` of them; nil: the whole selection, as the first run.
+        var gateOnly: [String]?
+        var gateTests: Int?
     }
 
     /// Entry point of the dynamic-library form (inserted into an app that the tool launched without xcodebuild).
@@ -109,6 +114,33 @@ enum SharedProcessDriverSource {
                     XCMutateSessionRunner(directory: directory)?.run()
                 }
             }
+        }
+        // A host that the tool started has no test session of Xcode, which keeps a test host running when it is
+        // not in front (another app was opened, for instance): the system suspends such a host and ends it when a
+        // background task does not finish in time. Written down so that a process that ends this way can be told.
+        for (name, word) in [("UIApplicationDidEnterBackgroundNotification", "background"), ("UIApplicationWillEnterForegroundNotification", "foreground")] {
+            _ = NotificationCenter.default.addObserver(forName: Notification.Name(name), object: nil, queue: nil) { _ in
+                XCMutateAppState.note(word, directory: directory)
+            }
+        }
+    }
+
+    /// What the process knows outside the session runner: the test that started last, and whether the runner has
+    /// created `events.log` (before that, nothing may be written to it: a file that is not empty means a relaunch).
+    private enum XCMutateAppState {
+        static let lastTest = XCMutateBox<String>("")
+        static let sessionStarted = XCMutateBox(false)
+        static let lock = NSLock()
+
+        static func note(_ word: String, directory: String) {
+            guard sessionStarted.get() else { return }
+            let test = lastTest.get()
+            lock.lock()
+            defer { lock.unlock() }
+            guard let handle = FileHandle(forWritingAtPath: directory + "/events.log") else { return }
+            handle.seekToEndOfFile()
+            handle.write(Data(("NOTE \(word) \(String(format: "%.1f", Date().timeIntervalSince1970))" + (test.isEmpty ? "" : "\t" + test) + "\n").utf8))
+            try? handle.close()
         }
     }
 
@@ -161,9 +193,12 @@ enum SharedProcessDriverSource {
             FileManager.default.createFile(atPath: eventsPath, contents: nil)
             guard let handle = FileHandle(forWritingAtPath: eventsPath) else { return nil }
             events = handle
+            XCMutateAppState.sessionStarted.update { $0 = true }
         }
 
         private func emit(_ line: String) {
+            XCMutateAppState.lock.lock()
+            defer { XCMutateAppState.lock.unlock() }
             events.seekToEndOfFile()
             events.write(Data((line + "\n").utf8))
         }
@@ -181,6 +216,7 @@ enum SharedProcessDriverSource {
         }
 
         private func noteTestStart(_ name: String) {
+            XCMutateAppState.lastTest.update { $0 = name }
             testLog.update { $0?.write(Data((name + "\n").utf8)) }
         }
 
@@ -211,14 +247,17 @@ enum SharedProcessDriverSource {
                 emit("CONTROL 1 \(first.status == "pass" ? "ok" : first.status) \(first.tests) \(first.seconds)" + names(first.failed))
                 guard first.status == "pass" else { return finish("control") }
                 afterFirst = snapshot()
-                let second = pass(only: nil)
-                let secondOK = second.status == "pass" && second.tests == first.tests
+                // The first run has shown that the driver selects the tests that xcodebuild ran, and has left in the
+                // process what every suite leaves. The second runs the suites of the plan's mutants: how often a
+                // switch is evaluated there is compared with the first run (those suites are where it is evaluated)
+                let second = pass(only: plan.gateOnly)
+                let secondOK = second.status == "pass" && second.tests == (plan.gateOnly == nil ? first.tests : (plan.gateTests ?? -1))
                 emit("CONTROL 2 \(secondOK ? "ok" : (second.status == "pass" ? "fail" : second.status)) \(second.tests) \(second.seconds)" + names(second.failed))
                 guard secondOK else { return finish("control") }
                 afterSecond = snapshot()
                 logTests(false)
                 controlTests = first.tests
-                cleanSelection = "*"
+                cleanSelection = plan.gateOnly == nil ? "*" : "gate"
                 writeClasses(launch: launch, afterFirst: afterFirst, afterSecond: afterSecond)
             }
             var prechecked = false
@@ -258,8 +297,10 @@ enum SharedProcessDriverSource {
                     guard check("PRE", id, entry) else { return finish("precheck") }
                     cleanSelection = key
                 }
-                // The whole selection has just passed: so have the tests of any mutant
-                let cleanAtBegin = cleanSelection == key || cleanSelection == "*"
+                // The whole selection has just passed: so have the tests of any mutant. After the second run at the
+                // start, when it ran the suites of the plan: the tests of a mutant among them
+                let inGate = cleanSelection == "gate" && entry.only.map { Set($0).isSubset(of: Set(plan.gateOnly ?? [])) } == true
+                let cleanAtBegin = cleanSelection == key || cleanSelection == "*" || inGate
                 emit("BEGIN \(id) \(cleanAtBegin ? 1 : 0)")
                 let result = run(entry)
                 emit("END \(id) \(result.status) \(result.activations) \(result.tests) \(result.seconds)" + names(result.failed))
@@ -561,7 +602,10 @@ enum SharedProcessDriverSource {
                     let testID = payload["testID"] as? String
                     switch payloadKind {
                     case "testStarted":
-                        if let testID { testLog.update { $0?.write(Data((testID + "\n").utf8)) } }
+                        if let testID {
+                            XCMutateAppState.lastTest.update { $0 = testID }
+                            testLog.update { $0?.write(Data((testID + "\n").utf8)) }
+                        }
                     case "testEnded", "testSkipped":
                         if let testID { state.update { $0.ended.insert(testID) } }
                     case "issueRecorded":

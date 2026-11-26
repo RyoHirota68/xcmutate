@@ -16,6 +16,8 @@ expected.json:
   "details":   {"<declaration>::<operator>": ["<text>", ...]}  the detail of every mutant of that key must contain
                one of the texts (for example the limit that stopped a run)
   "maxSeconds": {"<declaration>::<operator>": <seconds>}  no mutant of that key may have taken longer
+  "notInSharedProcess": [...]  with --shared-process: no mutant of these may have its verdict from a shared process
+               (they must have been sent to a process of their own)
   "exitStatus" is checked by the calling script.
 """
 import json
@@ -72,6 +74,11 @@ def main() -> int:
             detail = result.get("detail") or ""
             if not any(text in detail for text in texts):
                 problems.append(f"{result['mutant']['key']}: the detail names none of {texts}: {detail or 'no detail'}")
+    if report.get("durations", {}).get("sharedProcess") is not None:
+        for name in expected.get("notInSharedProcess", []):
+            for result in found.get(name, []):
+                if result.get("sharedProcess"):
+                    problems.append(f"{result['mutant']['key']}: judged in a shared process, expected a process of its own")
     for name, limit in expected.get("maxSeconds", {}).items():
         for result in found.get(name, []):
             if result.get("durationSeconds", 0) > limit:

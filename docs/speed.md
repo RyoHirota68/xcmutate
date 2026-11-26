@@ -35,7 +35,7 @@ With short tests, almost all of the time is spent outside the tests: starting `x
 With long tests the opposite is true. On the app, a run of all tests takes 88 s per mutant. And the tests are not run only once per mutant:
 
 - a detection is followed by a run without mutants, so that state left behind is not counted as a detection of the next mutant;
-- a shared process starts with two runs without mutants;
+- a shared process starts with two runs without mutants (with `--select-tests reach`, the second runs only the suites of its mutants);
 - a mutant that never ends is waited for during a multiple of the tests' time.
 
 Each of these steps is as long as the tests it runs. The second half of this page is about them.
@@ -139,6 +139,28 @@ It helps little, or costs time, when
 - much of the mutated code runs once per process (`static let`, lazily built caches, app start-up). Each such mutant needs a run of all selected tests in a separate process, and another without mutants before the next mutant;
 - the tests are slow and the mutants few. The two runs at the start of the first shared process (62 s on the load fixture) are needed once per unit-test target and configuration, and a handful of mutants does not earn them back.
 
+### Letting the tool decide: `--shared-process auto`
+
+With `--shared-process auto` the tool weighs, after the baseline, what shared processes save against what they cost ([usage.md](usage.md#--shared-process-auto)):
+
+```
+mutants × launch  ≥  units × (2 × tests of one run without mutants + launch)
+```
+
+The left side counts one saved launch per mutant. The measurements above saved more than that: on the fixture 9.6 s per mutant (11.0 s against 1.4 s) with a launch of about 5 s, and on the load fixture about 9 s per mutant (75 mutants with `--select-tests reach`: 1,617 s with one process per mutant, measured on its variant in which two suites reach every mutant, and 946 s with `--shared-process`). That is close to two launches per mutant: one for the mutant and one for the run without mutants after a detection. The rule asks for one, so it still holds where crashes and hangs take about half of that saving away (FFCParserCombinator above saved 1.9 s per mutant). The right side is the start of a shared process in each unit: a launch and the two runs of the tests without mutants. With `--select-tests reach` the second of them is the time of the mutants' suites in the baseline.
+
+What the rule gives for the projects on this page:
+
+| | Launch | Tests of one run | Shared processes from |
+|---|---:|---:|---:|
+| Fixture | about 5 s | 0.2 s | 2 mutants |
+| Load fixture | about 5 s | 31 s | 14 mutants |
+| LogicKit on macOS (measured with `auto`) | 1.3 to 1.9 s | 0.3 to 0.4 s | 2 mutants |
+| The app, all tests selected, without narrowed tests | about 9 s | about 87 s | 21 mutants |
+| The app, `--select-tests reach`, one file whose mutants about 45 tests reach | about 9 s | about 87 s, then under 1 s | 11 mutants |
+
+The rule does not see crashes and hangs in advance, or the share of mutants that survive. It errs towards one process per mutant only for small numbers of mutants, where the difference is a minute or two. Whether `auto` becomes the default is left open until it has been compared on more projects.
+
 ### A large production app
 
 The same eight files of the app were run five times with `--select-tests reach --shared-process`. They have about 200 mutants, about 180 of which the tests reach, and about 1,200 tests in the selection. The times are for the mutant phase; "per mutant" divides by the reached mutants.
@@ -166,7 +188,7 @@ For comparison, the conditions under which the same app was fast: on two files w
 - One process per mutant: after a run that did not pass, one more launch of the test host before the next mutant. On the fixture, where nothing is narrowed and the tests take 0.2 s, that was 333 runs and 1,762 s of 4,134 s (5.3 s each: the launch). On the load fixture with narrowed tests it was 25 runs and 266 s of 589 s.
 - `--shared-process`: the checks are runs of the tests inside the process. Separate processes are needed only before a run under `xcodebuild`: 17 runs and 56 s of 528 s on the fixture, 9 runs and 178 s of 494 s on the load fixture.
 
-If your run is long and most mutants are detected, this is one more reason for `--shared-process`. `--confirm-kills none` removes these runs and, with them, the protection.
+If your run is long and most mutants are detected, this is one more reason for `--shared-process`. When these runs take 30% or more of the mutant phase of a run with one process per mutant, the run says so at the end. On the app, one file with 33 mutants, all detected, needed 37 such runs, 47% of the mutant phase. They cannot be left out without the protection: the run after a failing run is what shows that the next mutant's failure is its own. `--confirm-kills none` removes these runs and, with them, the protection.
 
 ### What the recheck of survivors costs
 

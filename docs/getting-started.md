@@ -82,7 +82,7 @@ There is no `--since` here, so every line of the package is mutated. On a real p
 While it runs, the tool prints its progress to standard error: the baseline, a line that starts with `timeouts:` (the limits after which a run is stopped, taken from the baseline), and one line per mutant. The report follows on standard output:
 
 ```
-xcmutate 0.13.0: 2 mutants (scope: all)
+xcmutate 0.14.0: 2 mutants (scope: all)
   Killed 1, Survived 1
   mutation score: 50.0% (detected / (detected + survived + not reached))
   among reached:  50.0% (detected / (detected + survived))
@@ -116,7 +116,7 @@ xcmutate run --package . --scheme Shop --destination 'platform=macOS' \
 ```
 
 ```
-xcmutate 0.13.0: 1 mutant (scope: only)
+xcmutate 0.14.0: 1 mutant (scope: only)
   Killed 1
 ```
 
@@ -226,7 +226,7 @@ xcmutate run --package . --scheme PriceKit --destination 'platform=macOS'
 The report:
 
 ```
-xcmutate 0.13.0: 11 mutants (scope: all)
+xcmutate 0.14.0: 11 mutants (scope: all)
   Killed 4, Survived 3, NotReached 4
   mutation score: 36.4% (detected / (detected + survived + not reached))
   among reached:  57.1% (detected / (detected + survived))
@@ -292,7 +292,7 @@ xcmutate run --package . --scheme PriceKit --destination 'platform=macOS' \
 ```
 
 ```
-xcmutate 0.13.0: 1 mutant (scope: only)
+xcmutate 0.14.0: 1 mutant (scope: only)
   Killed 1
 ```
 

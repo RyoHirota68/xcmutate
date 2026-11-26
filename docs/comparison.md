@@ -13,7 +13,7 @@ What xcmutate does:
 
 When Muter is the better choice:
 
-- You want a tool with a history. Muter has been developed since 2018, and 0.13.0 is the first release of xcmutate.
+- You want a tool with a history. Muter has been developed since 2018, and the first release of xcmutate, 0.13.0, was published in November 2026.
 - You need UI test suites, tvOS or watchOS. Muter's README says it supports them; xcmutate does not support UI tests and was not tried on those platforms.
 - Your tests are started by something other than `xcodebuild`. Muter's configuration takes any executable (`swift`, `fastlane`, `make`); xcmutate drives `xcodebuild` only (a contribution that changes this is welcome; see [CONTRIBUTING.md](../CONTRIBUTING.md#what-to-contribute-and-how)).
 

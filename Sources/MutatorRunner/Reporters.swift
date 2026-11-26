@@ -226,6 +226,9 @@ public struct AgentReport: Encodable {
         let unreached = order.filter { grouped[$0]!.gaps.allSatisfy { $0.gap == "notReached" } }
         let rest = order.filter { !unreached.contains($0) }
         scopes = (unreached + rest).map { grouped[$0]! }
+        // Hints only for the kinds of gap that the report holds (none when every mutant was detected)
+        let kinds = Set(scopes.flatMap(\.gaps).map(\.gap))
+        fixes = fixes.filter { kinds.contains($0.key) || $0.key == "narrowedOnly" }
 
         var warnings = report.warnings
         let errors = report.results.filter { $0.status == .runnerError || $0.status == .notActivated }
@@ -270,9 +273,11 @@ public enum TextReport {
         if let workers = d.workers, workers > 1 { timing += ", \(workers) workers" }
         out.append(timing)
         // One line per thing (they were all on the line of the times)
+        if let choice = d.sharedProcessChoice { out.append("  --shared-process auto: \(choice.reason)") }
         if let shared = d.sharedProcess {
             var line = "  shared processes: \(shared.processes); \(shared.killed) mutant\(shared.killed == 1 ? "" : "s") killed there, \(shared.passed) passed there\(shared.trustedSurvivors ? " (not confirmed alone)" : ""), \(shared.alone) run\(shared.alone == 1 ? "" : "s") alone"
             if let confirmed = shared.confirmedDirectly, confirmed > 0 { line += ", \(confirmed) survivors confirmed in a new process started by the tool" }
+            if let narrowed = shared.narrowedStartupRuns, narrowed > 0 { line += "; in \(narrowed) of the processes, the second run without mutants at the start ran only the suites that their mutants reach" }
             out.append(line)
         }
         if report.resumedCount > 0 { out.append("  resumed: \(report.resumedCount) results taken from the run that was continued") }
@@ -448,6 +453,13 @@ public enum GitHubReport {
         }
         if undetected.count > maxAnnotations {
             lines.append("::notice title=\(property(ToolInfo.name))::" + data("\(undetected.count - maxAnnotations) more undetected mutants are not shown as annotations (GitHub shows \(maxAnnotations) per step). The Markdown and JSON reports list all \(undetected.count)."))
+        }
+        if undetected.isEmpty, !report.interrupted {
+            // Without it the output is empty, which does not tell a run that found nothing from one that did not write
+            let detected = report.results.filter { $0.status.isDetected }.count
+            lines.append("::notice title=\(property(ToolInfo.name))::" + data(report.results.isEmpty
+                ? "No mutants were run."
+                : "No undetected mutants: \(detected) of \(report.results.count) mutants were detected" + (detected < report.results.count ? "; the others have no verdict or were accepted (see the text or JSON report)." : ".")))
         }
         if report.interrupted {
             lines.append("::notice title=\(property(ToolInfo.name))::" + data("\(report.timeLimitReached == true ? "The time limit was reached" : "The run was interrupted"): \(report.pendingKeys.count) mutants were not run."))

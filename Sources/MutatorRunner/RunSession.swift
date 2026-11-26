@@ -48,6 +48,12 @@ public struct RunConfiguration: Sendable {
     public var fingerprintIgnoredPaths: Set<String> = []
     /// `--shared-process`: run several mutants in one test process where that can be done without changing verdicts.
     public var sharedProcess = false
+    /// `--shared-process auto`: decide after the baseline whether shared processes are expected to save time
+    /// (`SharedProcessChoice`); `sharedProcess` is false then.
+    public var sharedProcessAuto = false
+    /// False (`--no-narrow-gate`): both runs without mutants at the start of a shared process run the whole selection.
+    /// True: with narrowed tests, the second runs only the suites of the process's mutants.
+    public var narrowGate = true
     /// `--trust-shared-survivors`: do not run again, alone, the mutants whose tests passed in a shared process.
     public var trustSharedSurvivors = false
     /// `--workers`: number of test destinations that run mutants at the same time.
@@ -149,6 +155,7 @@ public struct RunLayout: Sendable {
 
 /// Prints progress to standard error.
 func progress(_ message: String) {
+    RunProgress.printed(message)
     guard !ProgressOutput.silent else { return }
     FileHandle.standardError.write(Data("\(ToolInfo.name): \(message)\n".utf8))
 }
@@ -387,6 +394,7 @@ public final class RunSession {
 
         // 2. Work copy
         start = Date()
+        RunProgress.begin("work copy")
         let copied = try WorkCopy.create(from: layout.copyRoot, to: layout.sourceDirectory)
         // Clone the SPM package cache into DerivedData's default location (SourcePackages).
         // Some projects have build scripts that reference `$BUILD_DIR/../../SourcePackages`, so this is
@@ -441,6 +449,7 @@ public final class RunSession {
             let log = logsDirectory.appendingPathComponent("build-\(buildIndex).log")
             let bundle = resultsDirectory.appendingPathComponent("build-\(buildIndex).xcresult")
             buildIndex += 1
+            RunProgress.begin("build", hint: { RunProgress.compiledFiles(inLog: log.path).map { "\($0) source files compiled so far" } })
             progress(label)
             let outcome = try xcode.buildForTesting(resultBundle: bundle, log: log)
             try stopIfInterrupted()
@@ -558,9 +567,10 @@ public final class RunSession {
         }
 
         // 4. Baseline: all tests must pass with all mutants off. The reached switches are recorded at the same time
-        progress("baseline (all mutants off, recording reached switches\(config.selectTestsByReach ? " per test" : ""))...")
         let baselineTrace = tracesDirectory.appendingPathComponent("baseline.trace")
         let baselineLog = logsDirectory.appendingPathComponent("baseline.log")
+        RunProgress.begin("baseline", hint: { RunProgress.endedTests(inLog: baselineLog.path).map { "\($0) tests ended so far" } })
+        progress("baseline (all mutants off, recording reached switches\(config.selectTestsByReach ? " per test" : ""))...")
         let baselineBundle = resultsDirectory.appendingPathComponent("baseline.xcresult")
         let baselineOutcome = try runXcode.testWithoutBuilding(
             xctestrun: xctestrun,
@@ -714,7 +724,27 @@ public final class RunSession {
         // Shared processes: one per unit (test-plan configuration × unit-test target); a selection with a UI test target runs alone
         var sharedSetup: SharedProcess.Setup?
         var sharedUnavailable: String?
-        if config.sharedProcess {
+        var sharedChosen = config.sharedProcess
+        if config.sharedProcessAuto {
+            let toRun = active.filter { reached.contains($0.id) }
+            // The second run at the start of a shared process: the suites of the mutants (`MutantExecutor.narrowedGate`)
+            var secondRun: Double?
+            if config.narrowGate, let selector, selector.usable {
+                var union: Set<String> = []
+                var narrowed = !toRun.isEmpty
+                for mutant in toRun {
+                    guard let selection = selector.selection(for: mutant.id, evenlyEvaluated: true) else { narrowed = false; break }
+                    union.formUnion(selection.onlyTesting)
+                }
+                if narrowed { secondRun = timeouts.testSeconds(of: union.sorted()) }
+            }
+            let choice = sharedProcessChoice(units: (try? SharedProcess.units(xctestrun: xctestrun, options: runXcode.options).get().count) ?? 1,
+                                             mutants: toRun.count, timeouts: timeouts, baselineSeconds: baselineOutcome.duration, secondRun: secondRun)
+            durations.sharedProcessChoice = choice
+            sharedChosen = choice.used
+            progress("--shared-process auto: \(choice.reason)")
+        }
+        if sharedChosen {
             switch SharedProcess.units(xctestrun: xctestrun, options: runXcode.options) {
             case let .failure(reason):
                 sharedUnavailable = reason.description
@@ -753,6 +783,7 @@ public final class RunSession {
                           recheckSurvivors: config.recheckSurvivors && selector != nil),
             workers: workers)
         let mutantPhaseStart = Date()
+        RunProgress.begin("mutants", hint: { executor.progressHint() })
         var executorError: Error?
         do {
             try executor.run(active: active, reached: reached)
@@ -781,7 +812,8 @@ public final class RunSession {
                                             passed: executor.sharedSurvived, alone: executor.aloneCount, trustedSurvivors: config.trustSharedSurvivors,
                                             units: sharedSetup?.units.count, directProcesses: executor.directSessions,
                                             confirmedDirectly: executor.confirmedDirectly, pausedAlone: executor.pausedCount,
-                                            withoutStartupRuns: executor.ungatedSessions, timedOut: executor.sharedTimeouts)
+                                            withoutStartupRuns: executor.ungatedSessions, narrowedStartupRuns: executor.narrowedGates,
+                                            timedOut: executor.sharedTimeouts)
             progress(String(format: "shared processes: %d (%.0fs in total, %d started without xcodebuild, %d without the two runs at the start), %d mutants killed there, %d timed out there, %d passed there%@, %d runs under xcodebuild%@",
                             executor.sharedProcesses, executor.sharedSeconds, executor.directSessions, executor.ungatedSessions, executor.sharedKilled, executor.sharedTimeouts, executor.sharedSurvived,
                             config.trustSharedSurvivors ? " (not run again)" : " (\(executor.confirmedDirectly) confirmed in a new process started by the tool)",
@@ -828,6 +860,9 @@ public final class RunSession {
             warnings += executor.warnings.dropFirst(warningsTaken)
             let unsettledWorkers = executor.liveWorkers.sorted().filter { !settledWorkers.contains($0) }
             if !unsettledWorkers.isEmpty, !interrupted {
+                RunProgress.begin("final baseline", hint: {
+                    RunProgress.endedTests(inLog: self.logsDirectory.appendingPathComponent("baseline-final.log").path).map { "\($0) tests ended so far" }
+                })
                 progress("final baseline (all mutants off)\(unsettledWorkers.count > 1 ? " on each of \(unsettledWorkers.count) workers" : "")...")
             }
             for index in executor.liveWorkers.sorted() where !settledWorkers.contains(index) && !interrupted {
@@ -865,6 +900,11 @@ public final class RunSession {
         if executor.controlRuns + executor.confirmationRuns + executor.serialConfirmations > 0 {
             progress(String(format: "confirmation of detections (--confirm-kills %@): %d runs without mutants between mutants (%.0fs), %d mutants run a second time (%d passed then), %d detections seen in parallel run again alone",
                             config.confirmKills.rawValue, executor.controlRuns, executor.controlSeconds, executor.confirmationRuns, executor.unconfirmedKills, executor.serialConfirmations))
+            // Not after --shared-process auto has weighed it, and not for a handful of runs
+            if durations.sharedProcessChoice == nil, executor.controlRuns >= 5,
+               let hint = Self.controlShareHint(controlSeconds: executor.controlSeconds, mutantPhaseSeconds: durations.mutantPhaseSeconds ?? 0, sharedProcess: sharedSetup != nil) {
+                progress(hint)
+            }
         }
 
         // Keep what this run killed for later runs (--reuse). A run whose final baseline failed, or did not take place
@@ -932,7 +972,7 @@ public final class RunSession {
         if config.selectTestsByReach { parts.append("recheckSurvivors=\(config.recheckSurvivors)") }
         // How mutants are run decides what an observation in the journal means (a pass in a shared process is a verdict
         // only with --trust-shared-survivors; timeouts and confirmations depend on the workers)
-        parts.append("sharedProcess=\(config.sharedProcess)|trust=\(config.trustSharedSurvivors)|directLaunch=\(config.directLaunch)")
+        parts.append("sharedProcess=\(config.sharedProcessAuto ? "auto" : String(config.sharedProcess))|trust=\(config.trustSharedSurvivors)|directLaunch=\(config.directLaunch)|narrowGate=\(config.narrowGate)")
         parts.append("workers=\(config.workers)|\(config.additionalDestinations)")
         parts.append("copyRoot=\(config.copyRoot?.path ?? "")")
         if config.reuse { parts.append("reuse") }
@@ -958,6 +998,32 @@ public final class RunSession {
               let status = try? Subprocess.capture(["git", "-C", root.path, "status", "--porcelain"], timeout: 120), status.status == 0 else { return nil }
         return RunReport.Commit(sha: head.output.trimmingCharacters(in: .whitespacesAndNewlines),
                                 dirty: !status.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    /// The choice of `--shared-process auto`. A run that is continued (`--resume`) keeps the choice of the run it
+    /// continues, which is kept in the work directory: the observations in the journal were made in that mode.
+    func sharedProcessChoice(units: Int, mutants: Int, timeouts: TimeoutPolicy, baselineSeconds: Double, secondRun: Double?) -> RunDurations.SharedProcessChoice {
+        let file = config.workDirectory.appendingPathComponent("shared-process-choice.json")
+        if config.resume, let data = try? Data(contentsOf: file),
+           var earlier = try? JSONDecoder().decode(RunDurations.SharedProcessChoice.self, from: data) {
+            earlier.reason += " (the choice of the run that is continued)"
+            return earlier
+        }
+        // A launch: what the baseline needed until its first test started, or else what it spent outside its tests
+        let launch = timeouts.startupSeconds ?? (timeouts.suiteSeconds.isEmpty ? nil : timeouts.overheadSeconds)
+        // One run without mutants at the start: the tests of the whole selection
+        let tests = timeouts.suiteSeconds.isEmpty ? max(baselineSeconds - (launch ?? 0), 0) : timeouts.suiteSeconds.values.reduce(0, +)
+        let choice = SharedProcessChoice.decide(mutants: mutants, launchSeconds: launch, startupRunSeconds: tests,
+                                                secondRunSeconds: units == 1 ? secondRun : nil, units: units)
+        if let data = try? JSONEncoder().encode(choice) { try? data.write(to: file) }
+        return choice
+    }
+
+    /// With one process per mutant, each detection is followed by a launch of the test host without mutants. When
+    /// those launches are a large part of the mutant phase, the line says so and names what makes them cheaper.
+    static func controlShareHint(controlSeconds: Double, mutantPhaseSeconds: Double, sharedProcess: Bool) -> String? {
+        guard !sharedProcess, mutantPhaseSeconds > 0, controlSeconds / mutantPhaseSeconds >= 0.3 else { return nil }
+        return String(format: "the runs without mutants took %.0f%% of the mutant phase: with one process per mutant, every run that does not pass is followed by one, so that state it left on the destination is not taken for a detection of the next mutant. With --shared-process these runs are made inside the test process (docs/speed.md).", controlSeconds / mutantPhaseSeconds * 100)
     }
 
     static func formatDuration(_ seconds: Double) -> String {
@@ -1180,7 +1246,16 @@ public final class RunSession {
         if outcome.timedOut, outcome.watchLimit != "startup", outcome.watchLimit != "crash", !InterruptState.isInterrupted {
             let reports = SharedProcess.crashReports(bundleIdentifiers: Xcode.hostBundleIdentifiers(xctestrun: xctestrun), since: started,
                                                      device: xcode.simulatorUDID ?? SimulatorCheck.simulator(forDestination: xcode.options.destination)?.udid)
-            if let report = reports.first {
+            // Without a crash report (one is not written for every crash, and on a busy Mac it can come late): the
+            // host's own line that it terminates, when no test started or ended after it (`LogWatch.terminationLine`)
+            let terminated = reports.isEmpty ? LogWatch.terminationLine(in: logText, hosts: Xcode.hostExecutableNames(xctestrun: xctestrun)) : nil
+            if let terminated {
+                observation.crashEvidence = "the test host wrote that it terminates, and no test started or ended after that: \"\(terminated)\"; xcodebuild had not started the host again when the run was stopped (\(observation.limitNote ?? "the limit of the run"))"
+                observation.crashedIn = outcome.runningAtStop.count == 1 ? outcome.runningAtStop[0] : ""
+                observation.failedBeforeCrash = observation.crashedIn.map { !$0.isEmpty && LogWatch.failed($0, in: logText) }
+                observation.timedOut = false
+                observation.stoppedInTest = nil
+            } else if let report = reports.first {
                 let what = SharedProcess.describeCrashReport(atPath: report).map { " (\($0))" } ?? ""
                 observation.crashEvidence = "a crash report of the host was written during the run: \(report)\(what); xcodebuild had not started the host again when the run was stopped (\(observation.limitNote ?? "the limit of the run"))"
                 observation.crashedIn = outcome.runningAtStop.count == 1 ? outcome.runningAtStop[0] : ""

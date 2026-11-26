@@ -10,7 +10,7 @@ This page collects in one place what the tool does not do, what has not been tri
 - By default every mutant costs one launch of the test host: about 5 to 8 s on an iOS simulator with an app-hosted test target. `--shared-process` reduces this, with conditions ([speed.md](speed.md)).
 - Mutation is syntactic: the tool does not know types. Some mutants do not compile; they are found and removed, at the cost of a rebuild. Some are equivalent; record them with `accept`.
 - Files that git ignores, files outside the repository and git submodules are not in the work copy. Create them with `--prepare`.
-- `--shared-process` needs tests that pass twice in a row in one process, and no UI test target in the selection.
+- `--shared-process` needs tests that pass twice in a row in one process, and no UI test target in the selection. Tests that send the app to the background (by opening another app or a URL) need `xcodebuild` to start the host; the tool switches to it by itself, with a warning.
 - Only one run can use a work directory at a time, which by default means one run per checkout. Give parallel runs a `--work-dir` each.
 - Mutating a whole large app in one go is not practical. Use `--since`, a nightly run, or a sample with `--max-mutants`.
 
@@ -36,6 +36,8 @@ Speed:
 ## Known issues
 
 - **A test process that ends without a result.** In the checks of this version, a test process started by the tool ended without a result three times in about twenty runs. The cause is unknown. The tool repeats such a run, and the verdicts were right each time. If the same mutant loses its process twice in a row, the tool cannot tell that from a real crash and reports a Crash.
-- **A Crash reported as a Timeout.** A mutant that crashes the host was reported once as a Timeout. The same mutant was then run 120 more times and was a Crash every time; the cause is unknown. Since then, a crash report that the host writes during a run makes the run a Crash. A crash that leaves no report in time would still be a Timeout. Both count as detected.
+- **A Crash reported as a Timeout.** A mutant that crashes the host was reported once as a Timeout. The same mutant was then run 120 more times and was a Crash every time; the cause is unknown. Since then, a crash report that the host writes during a run makes the run a Crash. Since 0.14.0, so does the host's own line `*** Terminating app due to uncaught exception` in the log, when no test started or ended after it: on a busy Mac a run of a large app had neither the restart of `xcodebuild` nor a crash report in time. Only a line that names the host's process ID counts: a process that a test starts can write into the same log (a `Fatal error:` line from such a process was seen there), and Swift's `Fatal error:` line does not name a process. A crash that leaves neither in time would still be a Timeout. Both count as detected.
+
+- **Crash reports pile up.** Every mutant that crashes the test host leaves a crash report (`.ips`) in `~/Library/Logs/DiagnosticReports`, named after the host (a run of one file of a large app left eight). The tool reads them and does not delete them: the folder belongs to the system and holds reports of other programs. They can be removed by hand, for example `rm ~/Library/Logs/DiagnosticReports/<host name>-*.ips`.
 
 [verification.md](verification.md) says what the verdicts are checked against.

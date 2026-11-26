@@ -27,7 +27,7 @@ struct XCMutate: ParsableCommand {
     static func main() {
         var command: ParsableCommand
         do {
-            command = try parseAsRoot()
+            command = try parseAsRoot(rewrittenArguments(Array(CommandLine.arguments.dropFirst())))
         } catch {
             exit(withError: error)
         }
@@ -39,6 +39,32 @@ struct XCMutate: ParsableCommand {
         } catch {
             exit(withError: error)
         }
+    }
+}
+
+extension XCMutate {
+    /// `--shared-process auto` and `--shared-process=auto` become `--shared-process-auto`: a flag cannot take a value,
+    /// and `--shared-process` alone keeps its meaning.
+    static func rewrittenArguments(_ arguments: [String]) -> [String] {
+        var result: [String] = []
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--" {
+                result += arguments[index...]
+                break
+            }
+            if argument == "--shared-process=auto" {
+                result.append("--shared-process-auto")
+            } else if argument == "--shared-process", index + 1 < arguments.count, arguments[index + 1] == "auto" {
+                result.append("--shared-process-auto")
+                index += 1
+            } else {
+                result.append(argument)
+            }
+            index += 1
+        }
+        return result
     }
 }
 
@@ -109,8 +135,21 @@ struct CommonOptions: ParsableArguments {
         return path.hasPrefix(rootPath) ? String(path.dropFirst(rootPath.count)) : URL(fileURLWithPath: file).standardizedFileURL.path
     }
 
+    /// `--package <dir>` of `list`, as `run` takes it: a subdirectory of the root limits the files chosen by `--since`
+    /// to that directory (without --root and without file arguments). Nil when there is nothing to narrow.
+    func packageDirectory(_ package: String?) throws -> String? {
+        guard let package, root == nil, files.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: package, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw ValidationError("--package \(package) does not exist (looked for \(url.path); paths are relative to the current directory)")
+        }
+        let relative = relativePath(url.path)
+        return relative.isEmpty || relative == "." || relative.hasPrefix("/") ? nil : relative
+    }
+
     /// Processes all files. IDs are sequential from 0 across files.
-    func processAll() throws -> [FileResult] {
+    /// - Parameter packageDirectory: from `packageDirectory(_:)`: the files that --since chooses are those below it.
+    func processAll(packageDirectory: String? = nil) throws -> [FileResult] {
         let changed = try since.map { try GitDiff.changedLines(since: $0, root: rootURL) }
         var files = files
         if files.isEmpty {
@@ -120,7 +159,7 @@ struct CommonOptions: ParsableArguments {
                 throw ValidationError("Name the Swift files to look at, or give --since <ref> to take the files that changed since that commit.")
             }
             let configURL = config.map { URL(fileURLWithPath: $0) } ?? rootURL.appendingPathComponent(MutatorConfig.defaultName)
-            let selection: FileSelector.Selection
+            var selection: FileSelector.Selection
             do {
                 selection = try WorkCopyFiles.select(root: rootURL, patterns: try loadConfig(configURL).exclude ?? [])
             } catch let error as ValidationError {
@@ -128,9 +167,10 @@ struct CommonOptions: ParsableArguments {
             } catch {
                 throw ValidationError("\(rootURL.path) is not inside a git repository, so there is no list of tracked files to choose from. Name the Swift files as arguments.")
             }
+            if let packageDirectory { selection = selection.narrowed(to: packageDirectory) }
             files = selection.included.map { rootURL.appendingPathComponent($0).path }
                 .filter { changed[URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path] != nil }
-            if files.isEmpty { warn("--since \(since): no Swift file that would be mutated has changed under \(rootURL.path).") }
+            if files.isEmpty { warn("--since \(since): no Swift file that would be mutated has changed under \(packageDirectory.map { rootURL.appendingPathComponent($0).path } ?? rootURL.path).") }
         }
         var options = try generatorOptions()
         OperatorDeclarationSources.apply(to: &options, root: rootURL, extraFiles: files)
@@ -172,10 +212,14 @@ struct List: ParsableCommand {
 
         Examples:
           \(ToolInfo.name) list --since origin/main
+          \(ToolInfo.name) list --since origin/main --package Shop
           \(ToolInfo.name) list --keys Sources/App/Cart.swift
         """)
 
     @OptionGroup var common: CommonOptions
+
+    @Option(help: "The --package of the run: a subdirectory limits the files that --since chooses to that directory, as run does (without --root and without file arguments). Paths and keys stay relative to the root.")
+    var package: String?
 
     @Option(help: "Output format.")
     var format: OutputFormat = .text
@@ -187,7 +231,7 @@ struct List: ParsableCommand {
     var showKeys = false
 
     func run() throws {
-        let results = try common.processAll()
+        let results = try common.processAll(packageDirectory: try common.packageDirectory(package))
         switch format {
         case .json:
             try printJSON(Manifest(results: results))
@@ -509,7 +553,7 @@ struct TargetOptions: ParsableArguments {
 
 /// `run`: the options under the heading "How to build and test" of its help.
 struct ProjectOptions: ParsableArguments {
-    @Option(help: "Swift package directory (for example `.`). Give exactly one of --package, --project, --workspace. If the directory also has an .xcodeproj, remove it in the work copy with --prepare.")
+    @Option(help: "Swift package directory (for example `.`). Give exactly one of --package, --project, --workspace. A subdirectory of the repository limits the default files to mutate to that directory (without --root and without file arguments); paths and keys stay relative to the root. If the directory also has an .xcodeproj, remove it in the work copy with --prepare.")
     var package: String?
 
     @Option(help: "Xcode project (relative to the current directory).")
@@ -554,8 +598,12 @@ struct ProjectOptions: ParsableArguments {
 
 /// `run`: the options under the heading "Making it faster" of its help.
 struct SpeedOptions: ParsableArguments {
-    @Flag(help: "Run many mutants in one test process instead of starting the tests once per mutant. Usually several times faster with the same verdicts: a mutant is judged there only when its tests fail and then pass again without it, and the others are run again in a process of their own. Not used for UI test targets (a warning says so).")
+    @Flag(help: "Run many mutants in one test process instead of starting the tests once per mutant. Usually several times faster with the same verdicts: a mutant is judged there only when its tests fail and then pass again without it, and the others are run again in a process of their own. Not used for UI test targets (a warning says so). `--shared-process auto` uses shared processes only when the baseline's times say that they save time for the number of mutants (the run says which it chose, and why).")
     var sharedProcess = false
+
+    /// `--shared-process auto`, rewritten to this by `XCMutate.rewrittenArguments` (ArgumentParser has no flag with an optional value).
+    @Flag(name: .customLong("shared-process-auto"), help: .hidden)
+    var sharedProcessAuto = false
 
     @Option(help: "Which tests each mutant runs: none (all of them, the default), reach (only the suites that execute the mutated code, found in the baseline) or auto (tests named after the mutated file, Foo.swift -> FooTests). Use reach when one run of all tests takes more than a few seconds.")
     var selectTests: TestSelectionMode = .none
@@ -565,6 +613,9 @@ struct SpeedOptions: ParsableArguments {
 
     @Flag(help: "Skip mutants that an earlier run with --reuse in the same work directory found Killed, as long as nothing their result rests on has changed. Reused results are marked in the report; a run without the option remains the reference.")
     var reuse = false
+
+    @Flag(name: .customLong("no-narrow-gate"), help: "With --shared-process and --select-tests reach: make both runs without mutants at the start of a shared process of all selected tests. By default the second runs only the suites that the process's mutants reach.")
+    var noNarrowGate = false
 
     @Flag(name: .customLong("no-direct-launch"), help: "With --shared-process: let xcodebuild start every test process. By default the tool starts the test host itself where that is safe (faster), and falls back to xcodebuild with a warning when the tests do not pass in a host it started.")
     var noDirectLaunch = false
@@ -601,6 +652,9 @@ struct ReportOptions: ParsableArguments {
 
     @Option(help: "Path of the JSON report. Same as --report json:<path>.")
     var jsonOutput: String?
+
+    @Option(help: "Write the progress of the run to this file while it runs, one JSON object per line: phases, a heartbeat when nothing else happens for a minute, each mutant's result with the time left, and the exit code at the end. A program or a coding agent can follow it (docs/reports.md). With --resume the lines are appended.")
+    var progressFile: String?
 
     @Flag(help: "Exit with status 3 if any mutant was not detected (Survived or NotReached; accepted mutants do not count).")
     var failOnSurvived = false
@@ -707,7 +761,8 @@ struct Run: ParsableCommand {
     var packageCache: String? { projectOptions.packageCache }
 
     @OptionGroup(title: "Making it faster") var speed: SpeedOptions
-    var sharedProcess: Bool { speed.sharedProcess }
+    /// `--shared-process`, or `--shared-process auto` (which decides later whether they are used).
+    var sharedProcess: Bool { speed.sharedProcess || speed.sharedProcessAuto }
     var selectTests: TestSelectionMode { speed.selectTests }
     var workers: Int? { speed.workers }
     var reuse: Bool { speed.reuse }
@@ -758,6 +813,7 @@ struct Run: ParsableCommand {
         if let workers, workers < destination.count { throw ValidationError("--workers (\(workers)) is smaller than the number of --destination options (\(destination.count)).") }
         if trustSharedSurvivors, !sharedProcess { throw ValidationError("--trust-shared-survivors needs --shared-process.") }
         if noDirectLaunch, !sharedProcess { throw ValidationError("--no-direct-launch needs --shared-process.") }
+        if speed.noNarrowGate, !sharedProcess || selectTests != .reach { throw ValidationError("--no-narrow-gate needs --shared-process and --select-tests reach.") }
         if let recheckSurvivors, selectTests != .reach { throw ValidationError("--\(recheckSurvivors ? "" : "no-")recheck-survivors needs --select-tests reach.") }
         _ = try reportOutputs(workURL: URL(fileURLWithPath: "/"), cwd: URL(fileURLWithPath: "/"))
         if let failUnder, !(0...100).contains(failUnder) { throw ValidationError("--fail-under takes a percentage between 0 and 100.") }
@@ -809,6 +865,31 @@ struct Run: ParsableCommand {
     }
 
     func run() throws {
+        // The progress file is written from the start: a run that stops early ends it with its exit code too
+        if let progressFile = reports.progressFile {
+            let url = URL(fileURLWithPath: progressFile, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+            do {
+                try RunProgress.open(url, append: resume)
+            } catch {
+                throw ValidationError("--progress-file: cannot write \(url.path): \(error.localizedDescription)")
+            }
+        }
+        do {
+            try runAndReport()
+            RunProgress.finish(exitCode: 0)
+        } catch let exit as ExitCode {
+            RunProgress.finish(exitCode: exit.rawValue)
+            throw exit
+        } catch let error as ValidationError {
+            RunProgress.finish(exitCode: 64, message: error.message)
+            throw error
+        } catch {
+            RunProgress.finish(exitCode: 1, message: "\(error)")
+            throw error
+        }
+    }
+
+    func runAndReport() throws {
         let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let rootURL: URL
         if let root {
@@ -873,10 +954,17 @@ struct Run: ParsableCommand {
                 .filter { FileManager.default.fileExists(atPath: rootURL.appendingPathComponent($0).path) }
             targetFiles = fromKeys.sorted()
         }
+        // --package with a subdirectory and no --root: the default targets are the files of that package only. The root
+        // (and with it the keys, the accepted file, the config file and the work directory) stays the git top level
+        let packageDirectory: String? = try {
+            guard root == nil, files.isEmpty, only.isEmpty, let package else { return nil }
+            let relative = try relativeToRoot(package)
+            return relative.isEmpty || relative == "." || relative.hasPrefix("/") ? nil : relative
+        }()
         if targetFiles.isEmpty {
             // Default targets: the Swift files tracked by git (plus untracked ones that are not ignored), minus tests, generated code and the like.
             // Excluded files are not silently dropped but listed in the report. Those excluded although they are in the diff produce a warning
-            let selection: FileSelector.Selection
+            var selection: FileSelector.Selection
             do {
                 selection = try WorkCopyFiles.select(root: rootURL, patterns: (mutatorConfig.exclude ?? []) + exclude)
             } catch {
@@ -884,6 +972,7 @@ struct Run: ParsableCommand {
                 guard (try? GitDiff.git(["-C", rootURL.path, "rev-parse", "--is-inside-work-tree"])) == nil else { throw error }
                 throw ValidationError("\(rootURL.path) is not inside a git repository, so there is no list of tracked files to choose from. Name the Swift files to mutate as arguments.")
             }
+            if let packageDirectory { selection = selection.narrowed(to: packageDirectory) }
             targetFiles = selection.included
             let relevant = changed.map { map in selection.excluded.filter { map[$0.file] != nil } } ?? selection.excluded
             for file in relevant { excluded.counts[file.reason, default: 0] += 1 }
@@ -916,9 +1005,10 @@ struct Run: ParsableCommand {
             }
             // "0 mutants" must not look like "nothing to check" when Swift files did change
             if targetFiles.isEmpty, let since {
-                let existing = changed.keys.filter { FileManager.default.fileExists(atPath: rootURL.appendingPathComponent($0).path) }.sorted()
+                let existing = changed.keys.filter { FileManager.default.fileExists(atPath: rootURL.appendingPathComponent($0).path) }
+                    .filter { file in packageDirectory.map { file.hasPrefix($0 + "/") } ?? true }.sorted()
                 if existing.isEmpty {
-                    warn("--since \(since): no Swift file under \(rootURL.path) has changed; there is nothing to mutate.")
+                    warn("--since \(since): no Swift file under \(packageDirectory.map { rootURL.appendingPathComponent($0).path } ?? rootURL.path) has changed; there is nothing to mutate.")
                 } else {
                     let message = "--since \(since): \(existing.count) changed Swift file\(existing.count == 1 ? "" : "s") under the root (\(existing.prefix(5).joined(separator: ", "))\(existing.count > 5 ? ", …" : "")), and none of them is mutated: " + (files.isEmpty
                         ? "all are excluded (tests, generated code, `exclude`: see `files not mutated` in the report). To mutate one, pass it as an argument."
@@ -978,9 +1068,11 @@ struct Run: ParsableCommand {
         config.accepted = try AcceptedFile.load(acceptedURL)
         config.copyRoot = layout.copyRoot
         config.resume = resume
-        config.sharedProcess = sharedProcess
+        config.sharedProcess = speed.sharedProcess && !speed.sharedProcessAuto
+        config.sharedProcessAuto = speed.sharedProcessAuto
         config.trustSharedSurvivors = trustSharedSurvivors
         config.directLaunch = !noDirectLaunch
+        config.narrowGate = !speed.noNarrowGate
         config.reuse = reuse
         config.confirmKills = confirmKills
         config.recheckSurvivors = selectTests == .reach && (recheckSurvivors ?? true)

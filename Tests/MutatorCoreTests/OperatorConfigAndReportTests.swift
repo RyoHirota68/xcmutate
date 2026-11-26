@@ -368,6 +368,22 @@ struct FileSelectionTests {
     func glob(pattern: String, path: String, matches: Bool) {
         #expect(GlobPattern(pattern).matches(path) == matches)
     }
+    /// `run --package <subdirectory>`: only the files below it, the excluded ones as well (so that the report does not
+    /// list files of other projects); paths stay relative to the root. "." and "" leave the selection as it is, and a
+    /// directory is matched as a whole name, not as a prefix of another name.
+    @Test func narrowingToThePackageDirectory() {
+        let selection = FileSelector.Selection(
+            included: ["App/Cart.swift", "AppKit/Kit.swift", "App/Sub/Deep.swift", "Shop/Price.swift"],
+            excluded: [ExcludedFile(file: "App/Package.swift", reason: "package-manifest"),
+                       ExcludedFile(file: "Shop/Package.swift", reason: "package-manifest")])
+        let app = selection.narrowed(to: "App")
+        #expect(app.included == ["App/Cart.swift", "App/Sub/Deep.swift"])
+        #expect(app.excluded.map(\.file) == ["App/Package.swift"])
+        #expect(selection.narrowed(to: "App/").included == app.included)
+        #expect(selection.narrowed(to: ".").included == selection.included)
+        #expect(selection.narrowed(to: "").included == selection.included)
+        #expect(selection.narrowed(to: "Missing").included.isEmpty)
+    }
 }
 
 @Suite("Config, journal, judgement, gates and reports")
@@ -623,6 +639,13 @@ struct ConfigJournalAndReportTests {
         #expect(agent.gaps.map(\.narrowedOnly) == [true, nil])
         #expect(agent.fixes["narrowedOnly"]?.contains("--no-recheck-survivors") == true)
         #expect(AgentReport(report: Self.report([(.survived, "App/Cart.swift")])).fixes["narrowedOnly"] == nil)
+        // Hints only for the kinds of gap that are in the report; none when everything was detected
+        #expect(AgentReport(report: Self.report([(.survived, "App/Cart.swift")])).fixes.keys.sorted() == ["notDetected"])
+        let allKilled = Self.report([(.killed, "App/Cart.swift"), (.killed, "App/Cart.swift")])
+        #expect(AgentReport(report: allKilled).fixes.isEmpty)
+        // The annotations for GitHub say that nothing was left undetected, instead of writing nothing
+        #expect(GitHubReport.render(allKilled, workspace: nil) == "::notice title=xcmutate::No undetected mutants: 2 of 2 mutants were detected.")
+        #expect(XcodeReport.render(allKilled).isEmpty)
 
         let stryker = String(decoding: try JSONEncoder().encode(StrykerReport(report: report)), as: UTF8.self)
         #expect(stryker.contains("not run against all tests (--no-recheck-survivors)"))

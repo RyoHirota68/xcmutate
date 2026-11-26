@@ -457,6 +457,14 @@ enum SharedProcess {
         var stop: String?
         var done = false
         var relaunched = false
+        /// A host started by the tool went out of the front ("background") or back to it ("foreground"): when, and
+        /// the test that had started last.
+        var appStates: [AppState] = []
+        struct AppState: Equatable {
+            var state: String
+            var time: Date?
+            var test: String
+        }
 
         /// The mutant whose runs (with the mutant on, and the checks without it) have started and not finished.
         var current: Int? {
@@ -519,6 +527,10 @@ enum SharedProcess {
                 done = true
             case "RELAUNCH":
                 relaunched = true
+            case "NOTE":
+                if words.count >= 2, words[1] == "background" || words[1] == "foreground" {
+                    appStates.append(AppState(state: words[1], time: words.count >= 3 ? Double(words[2]).map { Date(timeIntervalSince1970: $0) } : nil, test: fields.count > 1 ? fields[1] : ""))
+                }
             default:
                 break
             }
@@ -647,6 +659,8 @@ enum SharedProcess {
         var gate: String?
         var controlTests: Int?
         var stopAtFirstFailure: Bool?
+        var gateOnly: [String]?
+        var gateTests: Int?
     }
 
     /// The two runs without mutants at the start of a shared process.
@@ -813,10 +827,21 @@ enum SharedProcess {
             let started = text.split(separator: "\n")
             lines.append("  tests started in the runs without mutants: \(started.count)" + (started.last.map { "; the last one: \($0)" } ?? ""))
         }
+        for change in events.appStates {
+            lines.append("  the app went to the \(change.state)" + (change.time.map { " at \(clockTime($0))" } ?? "") + (change.test.isEmpty ? "" : ", while this test ran: \(change.test)"))
+        }
         let reports = crashReports(for: unit, since: start)
         lines.append("  crash reports since the start: " + (reports.isEmpty ? "none found in ~/Library/Logs/DiagnosticReports" : ""))
         lines += reports.map { "    " + $0 }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// A time of day as the system log and the host's output write it (local time, to the millisecond).
+    static func clockTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter.string(from: date)
     }
 
     /// Crash reports of the host's executable that were written after `start` (simulator and macOS processes both
@@ -881,6 +906,13 @@ enum SharedProcess {
         return nil
     }
 
+    /// What the driver's notes say when the app was out of the front at the end; nil if it was not.
+    static func backgroundCause(_ changes: [Events.AppState]) -> String? {
+        guard let last = changes.last, last.state == "background" else { return nil }
+        let when = (last.time.map { " at \(clockTime($0))" } ?? "") + (last.test.isEmpty ? "" : " while \(last.test) ran")
+        return "the app went to the background\(when) and did not come back to the front (a test that opens another app or a URL does this). Under xcodebuild a test host keeps running when it is not in front; a host that the tool started is suspended there, and the system ends it when a background task of the app (a network request in progress, for instance) has not finished after about 30 seconds (code 0x2182bad2). Such tests need xcodebuild to start the host."
+    }
+
     /// Copies what a process started by the tool left (the host's output, the command and how it ended, the driver's
     /// events, the plan) to `logs/<name>`, which outlives the session directory, and returns a text for the warning:
     /// where the copies are and the last lines the host wrote.
@@ -896,9 +928,13 @@ enum SharedProcess {
         let last = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.suffix(3)
             .map { String($0.prefix(200)) }
         let tail = last.isEmpty ? "the host wrote nothing" : "last output of the host: " + last.joined(separator: " | ")
-        let cause = knownCause(inHostOutput: output).map { " Cause: \($0)" } ?? ""
+        var events = Events()
+        for line in ((try? String(contentsOf: kept.appendingPathComponent("events.log"), encoding: .utf8)) ?? "").split(separator: "\n") {
+            events.consume(String(line))
+        }
+        let cause = (knownCause(inHostOutput: output) ?? backgroundCause(events.appStates)).map { " Cause: \($0)" } ?? ""
         let started = ((try? String(contentsOf: kept.appendingPathComponent("tests.log"), encoding: .utf8)) ?? "").split(separator: "\n")
-        let lastTest = started.last.map { " The last test that started: \($0) (\(started.count) had started)." } ?? ""
+        let lastTest = started.last.map { " The last test that started in the runs without mutants at the start of the process: \($0) (\(started.count) had started)." } ?? ""
         // The crash report of a process is written a few seconds after it has ended (a record made at once says
         // "none found"): looked for again here, for up to six seconds. This is
         // the path of a process that failed, which is rare, so the wait does not slow a run down.
@@ -941,32 +977,50 @@ enum SharedProcess {
             }
             exit = " How the process ended, from the simulator's log: \(exitReason(in: lines) ?? lines[lines.count - 1])."
         }
-        return (kept, "Kept for inspection in \(kept.path): host.log (output of the host), launch.txt (the command, the environment, how the process ended, crash reports), events.log (what the driver reported), tests.log (the tests that started, in order).\(lastTest)\(exit)\(crash) \(tail)\(cause)")
+        return (kept, "Kept for inspection in \(kept.path): host.log (output of the host), launch.txt (the command, the environment, how the process ended, crash reports), events.log (what the driver reported), tests.log (the tests that started, in order).\(lastTest)\(exit)\(crash) \(tail)\(cause.isEmpty || tail.hasSuffix(".") ? "" : ".")\(cause)")
     }
 
     /// The lines that SpringBoard and runningboardd wrote about a process that exited, from the system log of a
     /// simulator (the last `lastSeconds` seconds); nil if the log could not be read.
     static func exitLines(simulator udid: String, processID: Int, lastSeconds: Int) -> [String]? {
-        let predicate = "(process == \"SpringBoard\" OR process == \"runningboardd\") AND (eventMessage CONTAINS[c] \"exited\" OR eventMessage CONTAINS[c] \"termination reported\")"
+        // The lines about the end, and those about the process going out of the front and back (which is what
+        // ends a host that a background task keeps from being suspended: runningboardd's "Terminating with context"
+        // line says which task)
+        let predicate = "(process == \"SpringBoard\" OR process == \"runningboardd\") AND (eventMessage CONTAINS[c] \"exited\" OR eventMessage CONTAINS[c] \"termination reported\" OR eventMessage CONTAINS \"Terminating with context\" OR eventMessage CONTAINS \"process visibility to\")"
         guard let result = try? Subprocess.capture(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "\(max(lastSeconds, 20))s", "--style", "compact", "--predicate", predicate],
                                                    timeout: 30, ignoresInterrupt: true), result.status == 0 else { return nil }
         return exitLines(inLog: result.output, processID: processID)
     }
 
-    /// The lines of such a log that name the process (`…:<pid>]`), shortened; the last three.
+    /// The lines of such a log that name the process (`…:<pid>]`), shortened; the last twelve.
     static func exitLines(inLog log: String, processID: Int) -> [String] {
         log.split(whereSeparator: \.isNewline).filter { $0.contains(":\(processID)]") || $0.contains("pid \(processID)") || $0.contains("pid=\(processID)") || $0.contains("pid:\(processID)") }
-            .suffix(3).map { String($0.trimmingCharacters(in: .whitespaces).prefix(400)) }
+            .suffix(12).map { String($0.trimmingCharacters(in: .whitespaces).prefix(600)) }
     }
 
     /// "signal SIGSEGV(11)" and the like, from lines of the simulator's log about a process that exited.
     static func exitReason(in lines: [String]) -> String? {
         for line in lines.reversed() {
-            if let range = line.range(of: #"domain:[A-Za-z]+\(\d+\) code:[A-Za-z0-9_]+\(\d+\)"#, options: .regularExpression) { return String(line[range]) }
+            if let range = line.range(of: #"domain:[A-Za-z]+\(\d+\) code:[A-Za-z0-9_]+(\(\d+\))?"#, options: .regularExpression) {
+                let reason = String(line[range])
+                let code = reason.split(separator: ":").last.map { String($0).lowercased() } ?? ""
+                return reason + (terminationCodes[code].map { " (\($0))" } ?? "")
+            }
             if let range = line.range(of: #"exited (voluntarily|with [^>,]{1,60})"#, options: .regularExpression) { return String(line[range]) }
         }
         return nil
     }
+
+    /// Termination codes of the RunningBoard domain, as Apple's documentation on SIGKILL explains them.
+    static let terminationCodes: [String: String] = [
+        "0x2182bad2": "the system ended the app because a background task did not complete in time",
+        "0x2182bad3": "the system ended the app because a background URL session did not complete in time",
+        "0x2182bad4": "the system ended the app because a background fetch did not complete in time",
+        "0x8badf00d": "the system's watchdog ended the app",
+        "0xdead10cc": "the system ended the app because it held a file or database lock when it was suspended",
+        "0xc00010ff": "the system ended the app because of a thermal event",
+        "0xd00d2bad": "the system ended the app because it used too much of a system resource",
+    ]
 
     /// How long a crash report is waited for when the evidence of a process that failed is kept.
     nonisolated(unsafe) static var crashReportWait: TimeInterval = 6
@@ -1016,6 +1070,7 @@ enum SharedProcess {
     /// - Parameter onProgress: called whenever the driver has reported something new, with everything reported so far.
     static func runSession(_ mode: Mode, setup: Setup, unit unitIndex: Int, launcher: Launcher, expectedTests: Int?, xcode: Xcode, directory: URL,
                            singleTimeout: Double = 0, gate: Gate = .full, limits: [Int: Double] = [:],
+                           narrowedGate: (only: [String], tests: Int)? = nil,
                            onProgress: (Events) throws -> Void = { _ in }) throws -> SessionResult {
         let unit = setup.units[unitIndex]
         let fm = FileManager.default
@@ -1036,6 +1091,9 @@ enum SharedProcess {
             if case let .known(tests, _) = gate {
                 plan.gate = "known"
                 plan.controlTests = tests
+            } else if let narrowedGate {
+                plan.gateOnly = narrowedGate.only
+                plan.gateTests = narrowedGate.tests
             }
             environment[setup.names.shared] = region.path
         case let .single(entry, active, trace):
@@ -1203,11 +1261,47 @@ enum SharedProcess {
             } else if let stop = events.stop, stop != "dirty" {
                 result.unusable = stop
             }
+            // A host started by the tool that ended out of the front was ended by the system, not by a mutant
+            // (`backgroundCause`); the next one would end the same way. The mutant that was on is run again.
+            if result.unusable == nil, launcher == .direct, result.ending == .exited, let last = events.appStates.last, last.state == "background" {
+                result.unusable = "the test process ended while the app was in the background (\(exitDescription(result.exitCode, viaSimctl: simulatorApp != nil)), \(String(format: "%.1f", result.duration))s after the start) (log: \(log.path))"
+            }
             if case .session = mode, case .full = gate, events.classesWritten,
                let text = try? String(contentsOf: directory.appendingPathComponent("classes.txt"), encoding: .utf8) {
                 result.classes = Classes.parse(text)
             }
         }
         return result
+    }
+}
+
+/// `--shared-process auto`: shared processes only where they are expected to save time.
+///
+/// What a shared process saves is launches of the test host: one per mutant at least (with one process per mutant,
+/// every mutant needs a launch, and a detected one a second launch for the run without mutants after it). What it
+/// costs once per unit is a launch and the two runs of the tests without mutants at its start. Measured with 0.13.0
+/// (docs/speed.md): the fixture saved 9.6 s per mutant with a launch of about 5 s, the load fixture 9 s per mutant;
+/// that is close to two launches per mutant. The rule asks only for one launch per mutant to pay for the start, so
+/// it still holds where crashes or hangs take half of that saving away.
+public enum SharedProcessChoice {
+    /// - Parameter secondRunSeconds: the tests of the second run without mutants at the start, when it runs only the
+    ///   suites of the mutants (`--select-tests reach`); nil: the whole selection, as the first.
+    public static func decide(mutants: Int, launchSeconds: Double?, startupRunSeconds: Double, secondRunSeconds: Double? = nil, units: Int) -> RunDurations.SharedProcessChoice {
+        let units = max(units, 1)
+        let second = secondRunSeconds ?? startupRunSeconds
+        guard let launch = launchSeconds, launch > 0 else {
+            return .init(used: false, mutants: mutants, launchSeconds: 0, startupRunSeconds: startupRunSeconds, secondRunSeconds: secondRunSeconds, units: units,
+                         reason: "one process per mutant: the baseline does not show what a launch of the test host costs, so a saving cannot be estimated")
+        }
+        let saving = Double(mutants) * launch
+        let start = Double(units) * (startupRunSeconds + second + launch)
+        let runs = secondRunSeconds == nil ? String(format: "2 × %.1f s", startupRunSeconds) : String(format: "%.1f s + %.1f s", startupRunSeconds, second)
+        let numbers = String(format: "%d mutant%@ × %.1f s per launch = %.0f s %@ %d unit%@ × (%@ of tests without mutants + %.1f s launch) = %.0f s",
+                             mutants, mutants == 1 ? "" : "s", launch, saving, saving >= start ? "≥" : "<", units, units == 1 ? "" : "s", runs, launch, start)
+        return saving >= start
+            ? .init(used: true, mutants: mutants, launchSeconds: launch, startupRunSeconds: startupRunSeconds, secondRunSeconds: secondRunSeconds, units: units,
+                    reason: "shared processes: the launches they save are expected to outweigh their start (\(numbers))")
+            : .init(used: false, mutants: mutants, launchSeconds: launch, startupRunSeconds: startupRunSeconds, secondRunSeconds: secondRunSeconds, units: units,
+                    reason: "one process per mutant: too few mutants for the start of a shared process to pay off (\(numbers))")
     }
 }

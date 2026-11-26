@@ -48,7 +48,8 @@ struct LimitsAndReportingTests {
         let lines = GitHubReport.render(report, workspace: nil).split(separator: "\n").map(String.init)
         #expect(lines.filter { $0.hasPrefix("::warning ") }.count == GitHubReport.maxAnnotations)
         #expect(lines.last == "::notice title=\(ToolInfo.name)::4 more undetected mutants are not shown as annotations (GitHub shows 10 per step). The Markdown and JSON reports list all 14.")
-        #expect(GitHubReport.render(ConfigJournalAndReportTests.report([(.killed, "A.swift")]), workspace: nil).isEmpty)
+        // Nothing undetected: one notice that says so (an empty output would not tell this from a step that wrote nothing)
+        #expect(GitHubReport.render(ConfigJournalAndReportTests.report([(.killed, "A.swift")]), workspace: nil) == "::notice title=\(ToolInfo.name)::No undetected mutants: 1 of 1 mutants were detected.")
         // Exactly as many as GitHub shows: all of them, and no notice
         let ten = ConfigJournalAndReportTests.report(Array(repeating: (MutantStatus.survived, "App/Cart.swift"), count: GitHubReport.maxAnnotations))
         let all = GitHubReport.render(ten, workspace: nil).split(separator: "\n")
@@ -296,6 +297,130 @@ struct LimitsAndReportingTests {
         #expect(SharedProcess.exitReason(in: lines) == "domain:signal(2) code:SIGSEGV(11)")
         #expect(SharedProcess.exitLines(inLog: log, processID: 1).isEmpty)
         #expect(SharedProcess.exitReason(in: []) == nil)
+    }
+
+    /// The heartbeat of a quiet phase, and what a log shows of a build and of a run of tests.
+    @Test func aQuietPhaseSaysHowFarItHasGot() throws {
+        #expect(RunProgress.heartbeatLine(phase: "build", elapsed: 482, hint: "1,204 source files compiled so far") == "build: still running after 8m02s (1,204 source files compiled so far)")
+        #expect(RunProgress.heartbeatLine(phase: "baseline", elapsed: 59.6, hint: nil) == "baseline: still running after 1m00s")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("xcmutate-progress-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let build = directory.appendingPathComponent("build.log")
+        try """
+        SwiftCompile normal arm64 Compiling\\ Cart.swift /src/App/Cart.swift (in target 'App' from project 'App')
+        SwiftCompile normal arm64 /src/App/Cart.swift (in target 'App' from project 'App')
+        SwiftCompile normal arm64 /src/App/Price.swift (in target 'App' from project 'App')
+        CompileC /dd/Legacy.o /src/App/Legacy.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler
+        Ld /dd/App normal
+        """.write(to: build, atomically: true, encoding: .utf8)
+        #expect(RunProgress.compiledFiles(inLog: build.path) == 3)
+        let tests = directory.appendingPathComponent("baseline.log")
+        try """
+        Test Case '-[AppTests.CartTests testTotal]' started.
+        Test Case '-[AppTests.CartTests testTotal]' passed (0.003 seconds).
+        Test Case '-[AppTests.CartTests testEmpty]' failed (0.010 seconds).
+        ◇ Test totals() started.
+        \u{200B}✔ Test totals() passed after 0.001 seconds.
+        ✘ Test empty() recorded an issue at CartTests.swift:3:5: Expectation failed
+        ✘ Test empty() failed after 0.002 seconds with 1 issue.
+        ✔ Test run with 2 tests in 0 suites passed after 0.004 seconds.
+        """.write(to: tests, atomically: true, encoding: .utf8)
+        #expect(RunProgress.endedTests(inLog: tests.path) == 4)
+        #expect(RunProgress.compiledFiles(inLog: directory.appendingPathComponent("none.log").path) == nil)
+    }
+
+    /// A host that ended with an uncaught exception while xcodebuild had not yet said that it restarts it (seen on a
+    /// busy Mac: the run was stopped by a limit and was a Timeout). The host's own line is evidence of a crash; a line
+    /// of another process, or one without the prefix that names the process, is not.
+    @Test func theHostsOwnLastWordsMakeACrash() {
+        let hosts: Set<String> = ["App"]
+        let log = """
+        2026-11-26 13:46:18.113582+0900 App[50059:234069179] [Setup] started
+        ◇ Test "totals" started.
+        ✘ Test "totals" recorded an issue at CalculatorTests.swift:212:20: Expectation failed
+        ◇ Test "raw value for an unknown factor" started.
+        2026-11-26 13:46:19.126428+0900 App[50059:234069962] *** Terminating app due to uncaught exception 'NSDecimalNumberOverflowException', reason: 'NSDecimalNumber overflow exception'
+        *** First throw call stack:
+        (
+        	0   CoreFoundation                      0x00000001c02896e8 __exceptionPreprocess + 172
+        )
+        libc++abi: terminating due to uncaught exception of type NSException
+        """
+        #expect(LogWatch.terminationLine(in: log, hosts: hosts)?.contains("App[50059:234069962] *** Terminating app due to uncaught exception 'NSDecimalNumberOverflowException'") == true)
+        // A test that started afterwards: the host went on (the line was another process's, or text a test printed)
+        #expect(LogWatch.terminationLine(in: log + "\n◇ Test \"next\" started.", hosts: hosts) == nil)
+        #expect(LogWatch.terminationLine(in: log + "\n\u{200B}✔ Test \"next\" passed after 0.001 seconds.", hosts: hosts) == nil)
+        // The same line from another process of the same executable (a Swift Testing exit test runs in a child process)
+        let child = log.replacingOccurrences(of: "App[50059:234069962] *** Terminating", with: "App[50071:234069990] *** Terminating")
+        #expect(LogWatch.terminationLine(in: child, hosts: hosts) == nil)
+        // From a process that is not the host, or without the prefix that names the process
+        #expect(LogWatch.terminationLine(in: log, hosts: ["Other"]) == nil)
+        let unprefixed = """
+        2026-11-26 13:46:18.113582+0900 App[50059:234069179] [Setup] started
+        ◇ Test "exits" started.
+        CalculatorTests.swift:30: Fatal error: the exit test's child stops here
+        libc++abi: terminating due to uncaught exception of type NSException
+        *** Terminating app due to uncaught exception 'X', reason: 'y'
+        """
+        #expect(LogWatch.terminationLine(in: unprefixed, hosts: hosts) == nil)
+        // The agent that hosts tests without an app
+        let agent = "2026-11-26 10:00:00.000 xctest[700:800] *** Terminating app due to uncaught exception 'X', reason: 'y'"
+        #expect(LogWatch.terminationLine(in: agent, hosts: ["xctest"]) != nil)
+    }
+
+    /// `--shared-process auto`: shared processes when the launches they save (one per mutant) pay for their start
+    /// (a launch and two runs of the tests without mutants per unit).
+    @Test func sharedProcessesAreChosenWhenTheLaunchesTheySavePayForTheirStart() {
+        // The fixture: launches of 5 s, tests of 0.2 s
+        #expect(SharedProcessChoice.decide(mutants: 1, launchSeconds: 5, startupRunSeconds: 0.2, units: 1).used == false)
+        #expect(SharedProcessChoice.decide(mutants: 2, launchSeconds: 5, startupRunSeconds: 0.2, units: 1).used == true)
+        // The load fixture: 31 s of tests, so 13 mutants are not enough and 14 are
+        #expect(SharedProcessChoice.decide(mutants: 13, launchSeconds: 5, startupRunSeconds: 31, units: 1).used == false)
+        #expect(SharedProcessChoice.decide(mutants: 14, launchSeconds: 5, startupRunSeconds: 31, units: 1).used == true)
+        // Four units need four starts
+        #expect(SharedProcessChoice.decide(mutants: 14, launchSeconds: 5, startupRunSeconds: 31, units: 4).used == false)
+        let choice = SharedProcessChoice.decide(mutants: 33, launchSeconds: 9, startupRunSeconds: 87, units: 1)
+        #expect(choice.used == true)
+        #expect(choice.reason == "shared processes: the launches they save are expected to outweigh their start (33 mutants × 9.0 s per launch = 297 s ≥ 1 unit × (2 × 87.0 s of tests without mutants + 9.0 s launch) = 183 s)")
+        // With --select-tests reach the second run at the start is of the mutants' suites only
+        let narrowed = SharedProcessChoice.decide(mutants: 11, launchSeconds: 9, startupRunSeconds: 87, secondRunSeconds: 0.5, units: 1)
+        #expect(narrowed.used == true)
+        #expect(narrowed.secondRunSeconds == 0.5)
+        #expect(narrowed.reason.contains("(87.0 s + 0.5 s of tests without mutants + 9.0 s launch) = 96 s"))
+        #expect(SharedProcessChoice.decide(mutants: 10, launchSeconds: 9, startupRunSeconds: 87, secondRunSeconds: 0.5, units: 1).used == false)
+        // Without a launch time from the baseline there is nothing to weigh: the default mode
+        #expect(SharedProcessChoice.decide(mutants: 100, launchSeconds: nil, startupRunSeconds: 1, units: 1).used == false)
+    }
+
+    /// A host that the tool started and that a test sent to the background: runningboardd ends it when a background
+    /// task has not finished (seen on an app with 6,900 tests: the code without a number in parentheses was not
+    /// recognized, and the warning said only that simctl does not say how the app ended).
+    @Test func aHostEndedInTheBackgroundIsNamedAsSuch() {
+        let log = """
+        2026-11-26 14:27:55.331 Df SpringBoard[66366:dfada32] [com.apple.FrontBoard:Process] [app<dev.example.App>:71837] Setting process visibility to: Background
+        2026-11-26 14:30:11.329 Df runningboardd[66381:dfb2e43] [com.apple.runningboard:process] [app<dev.example.App((null))>:71837] Terminating with context: <RBSTerminateContext| code:0x2182BAD2 explanation:Timed-out waiting for process [app<dev.example.App((null))>:71837] to invalidate assertion with identifier 66381-71837-3581 and explanation 'Shared Background Assertion 0 for dev.example.App'.>
+        2026-11-26 14:30:11.343 Df SpringBoard[66366:dfac20d] [com.apple.FrontBoard:Process] [app<dev.example.App>:71837] Process exited: <RBSProcessExitContext| specific, status:<RBSProcessExitStatus| domain:runningboard(15) code:0x2182bad2>>.
+        """
+        let lines = SharedProcess.exitLines(inLog: log, processID: 71837)
+        #expect(lines.count == 3)
+        #expect(SharedProcess.exitReason(in: lines) == "domain:runningboard(15) code:0x2182bad2 (the system ended the app because a background task did not complete in time)")
+
+        var events = SharedProcess.Events()
+        for line in ["HELLO 71837 1", "NOTE foreground 1795671916.8\t-[ATests testOpen]", "CONTROL 1 ok 26 50.3", "NOTE background 1795671967.1\t-[ATests testOpen]", "NOTE activities: allowed"] {
+            events.consume(line)
+        }
+        #expect(events.appStates.map(\.state) == ["foreground", "background"])
+        #expect(events.appStates.last?.test == "-[ATests testOpen]")
+        #expect(events.appStates.last?.time == Date(timeIntervalSince1970: 1795671967.1))
+        let cause = SharedProcess.backgroundCause(events.appStates)
+        #expect(cause?.contains("went to the background at ") == true)
+        #expect(cause?.contains("while -[ATests testOpen] ran") == true)
+        #expect(cause?.contains("0x2182bad2") == true)
+        // Back in front at the end: not the cause
+        events.consume("NOTE foreground 1795671970.0")
+        #expect(SharedProcess.backgroundCause(events.appStates) == nil)
+        #expect(SharedProcess.backgroundCause([]) == nil)
     }
 
     /// What an agent that followed the guide asked for: the result of every key in the report for agents (a run

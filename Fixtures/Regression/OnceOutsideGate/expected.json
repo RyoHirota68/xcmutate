@@ -1,0 +1,12 @@
+{
+  "comment": "A suite outside the suites of every mutant (AWarmupTests) switches on a cache once per process, so the body of price(_:) runs in the first run of all tests and not in a later run. With --select-tests reach --shared-process, the second run without mutants at the start of the shared process runs only BPriceTests: the switches in the body are evaluated in the first run and not in the second, and their mutants go to a process of their own. The verdicts are those of one process per mutant, with and without --no-narrow-gate.",
+  "statuses": {
+    "price(_:)::boundary": "Survived",
+    "price(_:)::condition-constant": ["Survived", "Survived"],
+    "price(_:)::condition-negation": ["Survived", "Survived"],
+    "price(_:)::return-value": ["NotReached", "Killed"],
+    "price(_:)::ternary-swap": "Killed"
+  },
+  "notInSharedProcess": ["price(_:)::boundary", "price(_:)::ternary-swap"],
+  "noWarnings": ["dependentTests", "stateLeak", "runnerError"]
+}

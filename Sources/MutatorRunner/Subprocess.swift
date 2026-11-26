@@ -85,6 +85,38 @@ struct LogWatch: Sendable, Equatable {
         return running
     }
 
+    /// The line in which the test host said that it terminates because of an uncaught exception, if the host itself
+    /// wrote it and no test started or ended after it; nil otherwise.
+    ///
+    /// Only a line with the prefix of NSLog / os_log is taken (`2026-11-26 13:46:19.126 App[50059:234069962] *** Terminating
+    /// app due to uncaught exception …`), and only when the name is one of `hosts` and the process ID is that of the
+    /// first such line of the log: the host starts first. A process that the tests start (a Swift Testing exit test,
+    /// a `Process`) can write to the same log, with another process ID; lines without the prefix (`libc++abi:
+    /// terminating`, Swift's `Fatal error:`) do not say which process wrote them, and are not taken. A test that
+    /// started or ended after the line shows that the host went on.
+    static func terminationLine(in log: String, hosts: Set<String>) -> String? {
+        var hostID: [String: Substring] = [:]
+        var found: String?
+        for line in log.split(whereSeparator: \.isNewline) {
+            // Swift Testing puts a zero-width space before some of its lines
+            let raw = line.drop { $0 == "\u{200B}" }
+            if let match = raw.firstMatch(of: /^\d{4}-\d{2}-\d{2} [0-9:.]+(?:[+-]\d{4})? ([^\[\] ]+)\[(\d+):[0-9a-fx]+\] (.*)$/) {
+                let name = String(match.1)
+                guard hosts.contains(name) else { continue }
+                let pid = hostID[name] ?? match.2
+                hostID[name] = pid
+                if match.2 == pid, match.3.hasPrefix("*** Terminating app due to uncaught exception") {
+                    if found == nil { found = String(raw.prefix(300)) }
+                }
+                continue
+            }
+            let event = raw.hasPrefix("Test Case '") || raw.hasPrefix("Test Suite '") || raw.hasPrefix("\u{2714} Test ") || raw.hasPrefix("\u{2718} Test ")
+                || (raw.hasPrefix("\u{25C7} Test ") && raw.hasSuffix(" started."))
+            if event { found = nil }
+        }
+        return found
+    }
+
     /// Whether the log shows a failed assertion of `test` (a name as `runningTests` gives it): XCTest writes
     /// `<file>:<line>: error: -[Module.Class method] : …`, Swift Testing `✘ Test name() recorded an issue …`.
     static func failed(_ test: String, in log: String) -> Bool {

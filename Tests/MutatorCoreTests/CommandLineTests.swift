@@ -204,6 +204,10 @@ import Testing
                 #expect(result.status == 64, "\(result.output)")
                 #expect(result.output.contains("\(flag) needs --select-tests reach"))
             }
+            // The second run at the start of a shared process is narrowed only with both options
+            let wideGate = try run(runArguments(directory, ["--shared-process", "--no-narrow-gate", "Sources/A.swift"]), in: directory)
+            #expect(wideGate.status == 64, "\(wideGate.output)")
+            #expect(wideGate.output.contains("--no-narrow-gate needs --shared-process and --select-tests reach"))
         }
     }
 
@@ -522,6 +526,47 @@ extension CommandLineTests {
             #expect(unknown.out.isEmpty)
             #expect(unknown.err.contains("The targets are:") && unknown.err.contains("agents-md"))
             #expect(try tool(["agent-guide"], in: directory, home: home).out == AgentGuide.text)
+        }
+    }
+}
+
+// MARK: list --package
+
+extension CommandLineTests {
+    /// `list --since … --package <subdirectory>` chooses the files as `run` does: only those below the package. The
+    /// keys keep their path from the root; `--package .`, `--root` and file arguments leave the choice as it was.
+    @Test(.enabled(if: available)) func listWithPackageNarrowsToThePackage() throws {
+        try withTemporaryDirectory("xcmutate-cli") { directory in
+            try git(["init", "-q", "."], in: directory)
+            for path in ["Shop/Sources/Shop/Price.swift", "App/Cart.swift"] {
+                let url = directory.appendingPathComponent(path)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try "func keep(_ a: Int) -> Bool {\n    return a == 0\n}\n".write(to: url, atomically: true, encoding: .utf8)
+            }
+            try git(["add", "-A"], in: directory)
+            try git(["commit", "-q", "-m", "init"], in: directory)
+            try change("Shop/Sources/Shop/Price.swift", in: directory)
+            try change("App/Cart.swift", in: directory)
+            func files(_ arguments: [String], in cwd: URL? = nil) throws -> Set<String> {
+                let result = try run(["list", "--since", "HEAD", "--keys"] + arguments, in: cwd ?? directory)
+                try #require(result.status == 0, "\(result.output)")
+                return Set(result.output.split(separator: "\n").compactMap { line -> String? in
+                    guard line.contains(": ["), let colon = line.range(of: ".swift:") else { return nil }
+                    return String(line[..<colon.lowerBound]) + ".swift"
+                })
+            }
+            let both: Set = ["Shop/Sources/Shop/Price.swift", "App/Cart.swift"]
+            #expect(try files([]) == both)
+            #expect(try files(["--package", "Shop"]) == ["Shop/Sources/Shop/Price.swift"])
+            // From inside the package, as the path is given relative to the current directory
+            #expect(try files(["--package", "."], in: directory.appendingPathComponent("Shop")) == ["Shop/Sources/Shop/Price.swift"])
+            #expect(try files(["--package", "."]) == both)
+            #expect(try files(["--package", "Shop", "--root", "."]) == both)
+            let keys = try run(["list", "--since", "HEAD", "--keys", "--package", "Shop"], in: directory)
+            #expect(keys.output.contains("  Shop/Sources/Shop/Price.swift::added(_:)::"))
+            let missing = try run(["list", "--since", "HEAD", "--package", "Nowhere"], in: directory)
+            #expect(missing.status == 64)
+            #expect(missing.output.contains("--package Nowhere does not exist"))
         }
     }
 }

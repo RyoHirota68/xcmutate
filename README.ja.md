@@ -18,7 +18,7 @@ xcmutate は、Swift / Xcode プロジェクト向けのミューテーション
 
 XCTest と Swift Testing に対応し、テストは macOS 上か iOS シミュレータ上で実行します。UI テストには対応していません（[必要なもの](#必要なもの)）。
 
-> これは最初のリリースです。オプションやレポートの形式は、1.0 までに変わることがあります。
+> これは初期の版です（0.14.0。最初のリリースは 0.13.0）。オプションやレポートの形式は、1.0 までに変わることがあります。
 
 ## コードカバレッジでは分からないこと
 
@@ -75,7 +75,7 @@ xcmutate run --package . --scheme <scheme> --destination 'platform=macOS'
 上のパッケージでは、レポートの最後は次のようになります。
 
 ```
-xcmutate 0.13.0: 2 mutants (scope: all)
+xcmutate 0.14.0: 2 mutants (scope: all)
   Killed 1, Survived 1
   …
 Survived / not reached:

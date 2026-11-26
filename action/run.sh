@@ -11,7 +11,7 @@ REPORTS="${INPUT_REPORT_DIRECTORY:-mutation-report}"
 mkdir -p "$REPORTS"
 # Reports of an earlier run in the same directory (a self-hosted runner, a restored cache) must not be taken for
 # the reports of this one when this one fails before it writes any
-for old in mutation.json mutation.md mutation.html; do
+for old in mutation.json mutation.md mutation.html progress.jsonl; do
   if [[ -e "$REPORTS/$old" ]]; then rm -f "${REPORTS:?}/$old"; fi
 done
 arguments=(run)
@@ -46,6 +46,7 @@ fi
 
 if [[ -n "${INPUT_SELECT_TESTS:-}" && "$INPUT_SELECT_TESTS" != "none" ]]; then arguments+=(--select-tests "$INPUT_SELECT_TESTS"); fi
 if [[ "${INPUT_SHARED_PROCESS:-false}" == "true" ]]; then arguments+=(--shared-process); fi
+if [[ "${INPUT_SHARED_PROCESS:-false}" == "auto" ]]; then arguments+=(--shared-process auto); fi
 if [[ -n "${INPUT_BASELINE_REPORT:-}" ]]; then arguments+=(--baseline-report "$INPUT_BASELINE_REPORT"); fi
 if [[ -n "${INPUT_FAIL_UNDER:-}" ]]; then arguments+=(--fail-under "$INPUT_FAIL_UNDER"); fi
 if [[ "${INPUT_FAIL_ON_SURVIVED:-false}" == "true" ]]; then arguments+=(--fail-on-survived); fi
@@ -54,7 +55,8 @@ if [[ -n "${INPUT_TIME_LIMIT:-}" ]]; then arguments+=(--time-limit "$INPUT_TIME_
 if [[ -n "${INPUT_WORK_DIR:-}" ]]; then arguments+=(--work-dir "$INPUT_WORK_DIR"); fi
 if [[ -n "${INPUT_PACKAGE_CACHE:-}" && -d "${INPUT_PACKAGE_CACHE}" ]]; then arguments+=(--package-cache "$INPUT_PACKAGE_CACHE"); fi
 
-arguments+=(--no-caffeinate --reporter text --report "json:$REPORTS/mutation.json" --report "markdown:$REPORTS/mutation.md" --report "html:$REPORTS/mutation.html")
+# The progress file is uploaded with the reports: for a job that was cancelled or timed out, it shows how far the run got
+arguments+=(--no-caffeinate --progress-file "$REPORTS/progress.jsonl" --reporter text --report "json:$REPORTS/mutation.json" --report "markdown:$REPORTS/mutation.md" --report "html:$REPORTS/mutation.html")
 if [[ "${INPUT_ANNOTATIONS:-true}" == "true" ]]; then arguments+=(--report "github:-"); fi
 
 # Further arguments: one per line, taken as they are (no word splitting, so values may hold spaces)

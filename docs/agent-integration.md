@@ -100,13 +100,17 @@ stdout carries only the JSON, without indentation. Progress and the text summary
 | `scopes[]` | Gaps grouped by enclosing function (a `let` inside the function is part of it). The function's source, with line numbers, appears once per function instead of once per gap. Functions that no test reaches at all come first |
 | `scopes[].gaps[]` | `key` (stable key for `--only` and `accept`), `gap` (`notReached` or `notDetected`), `line` / `column`, `mutator`, `original` / `replacement`, `originalExpression` / `mutatedExpression` (only where they say more than `original` / `replacement`: `a > b` for `>`), and with `--select-tests reach` `coveredBy` (the tests that execute the code) |
 | `obligations` | For each operator that occurs: what a test must tell apart to detect such a mutant. For `boundary`: the result changes only when both sides are exactly equal, so the boundary value itself must be an input |
-| `fixes` | What to do for each kind of gap. `fixes.narrowedOnly` is present when a gap has `narrowedOnly: true`: that mutant passed the tests that reach it and was not run against the other tests (`--no-recheck-survivors`), so a test that already exists may detect it; run without the option before writing a test for it |
+| `fixes` | What to do for each kind of gap, for the kinds that the report holds (empty when every mutant was detected). `fixes.narrowedOnly` is present when a gap has `narrowedOnly: true`: that mutant passed the tests that reach it and was not run against the other tests (`--no-recheck-survivors`), so a test that already exists may detect it; run without the option before writing a test for it |
 | `score`, `reachedScore`, `counts` | Ratios (0.75), and counts per result kind |
 | `testSelection`, `acceptance`, `warnings`, `interrupted`, `pendingCount` | What the result is valid for, and anything that makes it less trustworthy |
 
 When tests were narrowed (`--select-tests`, `--only-testing`), the wording is "among the selected tests": a `notReached` gap may be reached by a test that was not run.
 
 Nothing in the report is specific to one agent. A tool of your own can read it the same way: take the keys from `scopes[].gaps[]`, and pass them to `run --only` after changing the tests.
+
+### While the run is going
+
+The report for agents is written at the end. While a run is going, `--progress-file <path>` writes its progress line by line: the phase, each mutant's result with the time left, a heartbeat during a long build or baseline, and the exit code at the end ([reports.md](reports.md#the-progress-file)). The guide tells the agent to run a long run in the background and to report from this file. Its version is separate from that of the report for agents.
 
 ## 4. An example from a trial
 

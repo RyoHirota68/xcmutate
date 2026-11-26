@@ -71,6 +71,7 @@ run StateAcrossSuites reach StateAcrossSuites --select-tests reach
 run StateAcrossSuites reach-shared StateAcrossSuites --select-tests reach --shared-process
 run StateAcrossSuites reach-shared-trusted StateAcrossSuites --select-tests reach --shared-process --trust-shared-survivors
 run StateAcrossSuites reach-shared-xcodebuild StateAcrossSuites --select-tests reach --shared-process --no-direct-launch
+run StateAcrossSuites reach-shared-wide-gate StateAcrossSuites --select-tests reach --shared-process --no-narrow-gate
 EXPECTED=expected-narrowed.json
 run StateAcrossSuites reach-shared-no-recheck StateAcrossSuites --select-tests reach --shared-process --no-recheck-survivors
 EXPECTED=expected.json
@@ -101,11 +102,21 @@ run HiddenByOtherSuite one-process-per-mutant HiddenByOtherSuite
 run HiddenByOtherSuite reach-shared HiddenByOtherSuite --select-tests reach --shared-process
 run HiddenByOtherSuite reach-full HiddenByOtherSuite --select-tests reach --confirm-kills full
 run HiddenByOtherSuite reach-shared-full HiddenByOtherSuite --select-tests reach --shared-process --confirm-kills full
+run HiddenByOtherSuite reach-shared-wide-gate HiddenByOtherSuite --select-tests reach --shared-process --no-narrow-gate
 EXPECTED=expected-narrowed.json
 run HiddenByOtherSuite reach HiddenByOtherSuite --select-tests reach
 EXPECTED=expected.json
 
-for fixture in StateLeak SharedState Shapes StateAcrossSuites DependentSuites LeftoverElsewhere HiddenByOtherSuite; do
+# A suite outside the suites of every mutant changes, once per process, how often their switches are evaluated. The
+# second run without mutants at the start of a shared process runs only the mutants' suites (unless --no-narrow-gate):
+# the switches are then evaluated unequally often in the two runs, and their mutants go to a process of their own.
+run OnceOutsideGate one-process-per-mutant OnceOutsideGate
+run OnceOutsideGate reach OnceOutsideGate --select-tests reach
+run OnceOutsideGate reach-shared OnceOutsideGate --select-tests reach --shared-process
+run OnceOutsideGate reach-shared-xcodebuild OnceOutsideGate --select-tests reach --shared-process --no-direct-launch
+run OnceOutsideGate reach-shared-wide-gate OnceOutsideGate --select-tests reach --shared-process --no-narrow-gate
+
+for fixture in StateLeak SharedState Shapes StateAcrossSuites DependentSuites LeftoverElsewhere HiddenByOtherSuite OnceOutsideGate; do
   if [ -z "$ONLY" ] || [ "$ONLY" = "$fixture" ]; then "$BIN" clean --work-dir "$OUT/work-$fixture" >/dev/null 2>&1 || true; fi
 done
 if [ "$failures" -gt 0 ]; then

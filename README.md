@@ -18,7 +18,7 @@ xcmutate is a mutation testing tool for Swift and Xcode projects. It changes you
 
 It works with XCTest and Swift Testing, on macOS and iOS simulators. UI tests are not supported ([What you need](#what-you-need)).
 
-> This is the first release. Options and report formats may still change before 1.0.
+> This is an early version (0.14.0; the first release was 0.13.0). Options and report formats may still change before 1.0.
 
 ## What code coverage does not show
 
@@ -73,7 +73,7 @@ xcmutate run --package . --scheme <scheme> --destination 'platform=macOS'
 For the package above, the report ends like this:
 
 ```
-xcmutate 0.13.0: 2 mutants (scope: all)
+xcmutate 0.14.0: 2 mutants (scope: all)
   Killed 1, Survived 1
   …
 Survived / not reached:
@@ -155,7 +155,7 @@ The time per mutant is mostly the time of one run of the tests that can detect i
 
 A run is slow when the selected tests are long, or when many mutants survive, crash or hang. Mutating a whole large app in one go is not practical; use `--since`, a nightly run, or a sample with `--max-mutants`. [docs/speed.md](docs/speed.md) has the measurements and says when each option helps.
 
-`--shared-process` runs many mutants in one test process instead of launching the tests for each. It is off by default because it needs tests that pass twice in a row in one process.
+`--shared-process` runs many mutants in one test process instead of launching the tests for each. It is off by default because it needs tests that pass twice in a row in one process. `--shared-process auto` uses it only when the baseline's times say that it saves time for the number of mutants.
 
 ## How it differs from Muter
 

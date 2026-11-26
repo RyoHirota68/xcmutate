@@ -120,6 +120,26 @@ struct Xcode {
         return ids.sorted()
     }
 
+    /// Names of the executables of the test hosts in an `.xctestrun` file (`App` for `…/App.app`, `xctest` for the
+    /// agent that hosts tests without an app): the name that NSLog and os_log put before the process ID.
+    static func hostExecutableNames(xctestrun: URL) -> Set<String> {
+        guard let data = try? Data(contentsOf: xctestrun),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return [] }
+        var names: Set<String> = []
+        func collect(_ target: [String: Any]) {
+            if let path = target["TestHostPath"] as? String, !path.isEmpty {
+                names.insert(URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent)
+            }
+        }
+        if let configurations = plist["TestConfigurations"] as? [[String: Any]] {
+            for configuration in configurations {
+                for target in configuration["TestTargets"] as? [[String: Any]] ?? [] { collect(target) }
+            }
+        }
+        for (_, value) in plist { if let target = value as? [String: Any] { collect(target) } }
+        return names
+    }
+
     /// Names of the test plan configurations (when the xctestrun is in the format that has configurations).
     static func testConfigurationNames(xctestrun: URL) -> [String] {
         guard let data = try? Data(contentsOf: xctestrun),

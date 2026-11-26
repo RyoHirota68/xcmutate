@@ -44,7 +44,7 @@ jobs:
             echo "::warning::No baseline report was found (no successful run of nightly.yml on main, or no artifact mutation-baseline). This run fails for every undetected mutant on the changed lines instead of only for new ones."
           fi
 
-      - uses: RyoHirota68/xcmutate@v0.13.0
+      - uses: RyoHirota68/xcmutate@v0.14.0
         with:
           workspace: App.xcworkspace
           scheme: App

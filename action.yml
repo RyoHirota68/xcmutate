@@ -2,7 +2,7 @@
 #
 #   - uses: actions/checkout@v5
 #     with: { fetch-depth: 0 }
-#   - uses: RyoHirota68/xcmutate@v0.13.0
+#   - uses: RyoHirota68/xcmutate@v0.14.0
 #     with:
 #       workspace: App.xcworkspace
 #       scheme: App
@@ -27,7 +27,7 @@ inputs:
     description: "Xcode workspace."
     default: ""
   package:
-    description: "SwiftPM package directory (for example \".\")."
+    description: "SwiftPM package directory (for example \".\"). A subdirectory limits the files to mutate to that directory."
     default: ""
   scheme:
     description: "Scheme to build and test."
@@ -58,7 +58,7 @@ inputs:
     description: "none, auto or reach (the tool's --select-tests)."
     default: none
   shared-process:
-    description: "true: run several mutants per test process (--shared-process)."
+    description: "true: run several mutants per test process (--shared-process). auto: only when the baseline's times say that it saves time (--shared-process auto)."
     default: "false"
   baseline-report:
     description: "JSON report of an earlier run; the job fails (exit code 5) for mutants that are undetected now and were not then."
@@ -82,7 +82,7 @@ inputs:
     default: ""
   version:
     description: >-
-      Version of the tool: a release such as 0.13.0 (its binary is downloaded), or "source" (built from the
+      Version of the tool: a release such as 0.14.0 (its binary is downloaded), or "source" (built from the
       sources of the action's own ref and cached). Empty: the release of the action's ref when that is a tag
       v<version>, the sources otherwise.
     default: ""
@@ -93,7 +93,7 @@ inputs:
     description: "A SourcePackages directory to seed the build with (--package-cache); see docs/ci.md."
     default: ""
   report-directory:
-    description: "Where the reports are written (mutation.json, mutation.md, mutation.html)."
+    description: "Where the reports are written (mutation.json, mutation.md, mutation.html, and progress.jsonl: the progress of the run, line by line)."
     default: mutation-report
   artifact-name:
     description: "Name of the uploaded artifact with the reports. Empty: nothing is uploaded."

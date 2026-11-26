@@ -24,7 +24,7 @@ jobs:
           path: ${{ runner.temp }}/SourcePackages
           key: source-packages-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
 
-      - uses: RyoHirota68/xcmutate@v0.13.0
+      - uses: RyoHirota68/xcmutate@v0.14.0
         with:
           workspace: App.xcworkspace
           scheme: App

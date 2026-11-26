@@ -119,6 +119,8 @@ public struct RunDurations: Codable, Sendable {
     public var workers: Int?
     /// `--shared-process`: number of processes, their total time, and how the mutants were settled.
     public var sharedProcess: SharedProcessStatistics?
+    /// `--shared-process auto`: whether shared processes were used, and the numbers the choice rests on.
+    public var sharedProcessChoice: SharedProcessChoice?
 
     /// What `--confirm-kills` cost: the runs added to tell a mutant's doing from state left by earlier runs.
     public var confirmation: ConfirmationStatistics?
@@ -144,6 +146,24 @@ public struct RunDurations: Codable, Sendable {
         public var detectionsNotConfirmedByAll: Int?
     }
 
+    /// The choice of `--shared-process auto` (`SharedProcessChoice.decide`).
+    public struct SharedProcessChoice: Codable, Sendable, Equatable {
+        /// True: the mutants were run in shared processes.
+        public var used: Bool
+        /// Mutants that were to be run.
+        public var mutants: Int
+        /// What one launch of the test host costs outside the tests, from the baseline.
+        public var launchSeconds: Double
+        /// What the tests of the first run without mutants at the start of a shared process take, from the baseline.
+        public var startupRunSeconds: Double
+        /// The same for the second run, when it runs only the suites of the mutants (`--select-tests reach`).
+        public var secondRunSeconds: Double?
+        /// Units (test-plan configuration × unit-test target): each needs a start of its own.
+        public var units: Int
+        /// The choice and its reason in one sentence.
+        public var reason: String
+    }
+
     public struct SharedProcessStatistics: Codable, Sendable {
         public var processes: Int
         public var seconds: Double
@@ -165,6 +185,9 @@ public struct RunDurations: Codable, Sendable {
         public var pausedAlone: Int?
         /// Shared processes that did not repeat the two runs without mutants of the first process of their unit.
         public var withoutStartupRuns: Int?
+        /// Shared processes whose second run without mutants at the start ran only the suites of their mutants
+        /// (`--select-tests reach`, unless `--no-narrow-gate`).
+        public var narrowedStartupRuns: Int?
         /// Mutants whose tests did not end in time in a shared process, directly after the same tests had passed
         /// there without mutants (Timeout, final).
         public var timedOut: Int?

@@ -24,7 +24,7 @@ On 2026-11-24 the action was also run with `uses: RyoHirota68/xcmutate@v0.13.0` 
 - **A pull request.** `since` defaulted to the base branch (`--since origin/main`, scope `diff`). The warnings were placed on the changed line of the pull request (the check runs carry them as annotations on `Shop/Sources/Shop/Price.swift` line 11). The reports were uploaded as the artifact (`mutation.json`, `mutation.md`, `mutation.html`), and the job summary was written from `mutation.md`.
 - **A gate.** With `fail-on-survived: true` the step failed with exit code 3 and the output `exit-code` was `3`; the message points to the job summary.
 
-Note that `--root` defaults to the top of the git repository also with `package:` in a subdirectory: on `workflow_dispatch` (whole files) the run on the package also mutated the Swift files of the app next to it, which the package's tests do not reach (NotReached). Name the files with `files`, or give `--root` in `args`, when a repository holds more than one project.
+With `package:` in a subdirectory, only the Swift files below that directory are mutated (since 0.14.0; with 0.13.0 the run on the package above also mutated the Swift files of the app next to it, which the package's tests do not reach). Paths and keys stay relative to the top of the repository. `project:` and `workspace:` do not narrow the files, because a project can use files from anywhere in the repository: in the pull request above, the run on the app reported the changed lines of the package as NotReached. When a repository holds more than one project, name the files of each with `files`.
 
 Not tried on GitHub: `baseline-report` (and the nightly workflow that makes the baseline), `package-cache`, `select-tests` and `shared-process` on a simulator, and the example workflows as they are written. How the job summary and the warnings look in the browser was not looked at. For the rest, this is what was checked on a Mac:
 
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0           # the diff against the base branch needs its history
-      - uses: RyoHirota68/xcmutate@v0.13.0   # a released version; the tag must exist
+      - uses: RyoHirota68/xcmutate@v0.14.0   # a released version; the tag must exist
         with:
           workspace: App.xcworkspace
           scheme: App
@@ -73,17 +73,17 @@ In a `pull_request` event the action mutates only the lines that the pull reques
 | `since` | Git ref for the diff; `none` for whole files | the base branch in a pull request, otherwise nothing |
 | `files` | Swift files to mutate. On one line, separated by spaces; or one per line, and then a path may hold spaces. Shell patterns are expanded | all tracked Swift files outside test directories |
 | `select-tests` | `none`, `auto` or `reach` | `none` |
-| `shared-process` | `true` for `--shared-process` | `false` |
+| `shared-process` | `true` for `--shared-process`, `auto` for `--shared-process auto` | `false` |
 | `baseline-report` | JSON report of an earlier run: fail only for mutants that are undetected now and were not then | none |
 | `fail-under` | Fail when the score in percent is below this | none |
 | `fail-on-survived` | `true`: fail when a mutant is not detected | `false` |
 | `max-mutants` | Examine at most this many mutants ([below](#keeping-a-run-inside-a-time-budget)) | none |
 | `time-limit` | Stop after this time and report what was run, e.g. `45m` | none |
 | `args` | Further arguments for `xcmutate run`, one per line. An option and its value are two arguments: two lines | none |
-| `version` | A release such as `0.13.0` or `v0.13.0`, or `source`. A release that is named and cannot be downloaded fails the step | the release of the action's tag; the sources when the action is used by branch or commit |
+| `version` | A release such as `0.14.0` or `v0.14.0`, or `source`. A release that is named and cannot be downloaded fails the step | the release of the action's tag; the sources when the action is used by branch or commit |
 | `work-dir` | Work directory of the run | a directory under the runner's temporary directory |
 | `package-cache` | A `SourcePackages` directory to seed the build with ([Caching](#caching)) | none |
-| `report-directory` | Where `mutation.json`, `mutation.md` and `mutation.html` go | `mutation-report` |
+| `report-directory` | Where `mutation.json`, `mutation.md`, `mutation.html` and `progress.jsonl` (the progress of the run, [reports.md](reports.md#the-progress-file)) go; they are uploaded together | `mutation-report` |
 | `artifact-name` | Name of the uploaded artifact; empty for none | `mutation-report` |
 | `annotations` | `true`: undetected mutants become warnings on their lines | `true` |
 | `token` | Token for downloading the release binary | the workflow's token |
@@ -92,7 +92,7 @@ Outputs: `exit-code`, `score` (0 to 1), `undetected` (the number of Survived and
 
 **How the tool gets there.**
 
-- For a release (`uses: …@v0.13.0`, or `version: 0.13.0`) the action downloads `xcmutate-<version>-macos-universal.tar.gz` from the release and checks its SHA-256.
+- For a release (`uses: …@v0.14.0`, or `version: 0.14.0`) the action downloads `xcmutate-<version>-macos-universal.tar.gz` from the release and checks its SHA-256.
 - When the action is used by a branch or a commit, or with `version: source`, it builds the tool from the sources of the action's checkout with `swift build -c release`. That takes several minutes and needs Swift 6.3 or newer on the runner. If the runner's Swift is older, the action stops before the build and says why.
 - If the download fails, the result depends on where the version came from. A version named in `version` fails the step, because the job would otherwise run another version than the one it asked for. A version taken from the action's tag is built from the sources of that tag instead, with a notice.
 - The executable is cached with `actions/cache`, keyed by the version, or by a hash of the sources and the Swift version. A cached executable whose `--version` is not the one asked for is not used.
@@ -189,7 +189,7 @@ In the order in which they should be tried:
 - Projects that generate their Xcode project need `--prepare 'xcodegen generate'` (or the equivalent); the command runs in the work copy. With the action, pass it through `args` (`--prepare` on one line, the command on the next).
 - Files that git ignores are not in the work copy. Create them in `--prepare` ([usage.md](usage.md#when-the-build-cannot-find-a-file)).
 - Accepted mutants (`xcmutate.accepted.json`, committed in your repository) do not count as undetected, so a gate does not fail for them.
-- **Pin the version** (`@v0.13.0`, not a branch), so that results do not change under you.
+- **Pin the version** (`@v0.14.0`, not a branch), so that results do not change under you.
 - Xcode build phase instead of CI: `--reporter xcode` prints survivors as warnings that Xcode shows on the source lines.
 
 ## A large app

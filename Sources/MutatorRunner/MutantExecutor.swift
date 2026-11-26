@@ -196,6 +196,9 @@ final class MutantExecutor: @unchecked Sendable {
     /// Mutants that a shared process reported as Timeout.
     private(set) var sharedTimeouts = 0
     private var remaining = RemainingTime()
+    /// Shared processes that are running, by worker: when each started, and how many mutants had a result then.
+    /// Their time is added to `remaining.shared` only when they end; until then the estimate counts it as it stands.
+    private var liveSessions: [Int: (start: Date, executedAtStart: Int)] = [:]
     /// Per worker: the mutant whose last result was a RunnerError (run again elsewhere if the worker is dropped).
     private var lastRunnerError: [Int: (mutant: Mutant, note: String?)] = [:]
     private var droppedWorkers: Set<Int> = []
@@ -260,6 +263,39 @@ final class MutantExecutor: @unchecked Sendable {
         }
         guard let part = unitSelection(selection.onlyTesting, unit: unit) else { return nil }
         return SharedProcess.Entry(id: mutant.id, only: part.only, tests: part.tests)
+    }
+
+    /// For the heartbeat of the mutant phase: how many mutants have a result, and what a shared process that is in
+    /// its runs without mutants at the start has got to.
+    func progressHint() -> String? {
+        locked {
+            var hint = "\(executedCount) of \(total) mutants have a result"
+            for (directory, start) in liveSessionDirectories.values {
+                let events = (try? String(contentsOf: directory.appendingPathComponent("events.log"), encoding: .utf8)) ?? ""
+                guard !events.contains("CLASSES"), !events.contains("READY"), !events.contains("DONE") else { continue }
+                let started = ((try? String(contentsOf: directory.appendingPathComponent("tests.log"), encoding: .utf8)) ?? "").split(separator: "\n").count
+                hint += "; shared process \(directory.lastPathComponent) is in its runs without mutants at the start (\(RunProgress.formatElapsed(Date().timeIntervalSince(start))), \(started) tests started)"
+            }
+            return hint
+        }
+    }
+    private var liveSessionDirectories: [Int: (URL, Date)] = [:]
+
+    /// Shared processes whose second run without mutants at the start ran only the suites of their mutants.
+    private(set) var narrowedGates = 0
+
+    /// The suites of every mutant of a shared process of `unit`, and their number of tests, for the second run
+    /// without mutants at its start; nil when that run is to be of the whole selection: `--no-narrow-gate`, tests
+    /// that are not narrowed, or a mutant among them that runs the whole selection.
+    private func narrowedGate(_ mutants: [Mutant], unit: Int) -> (only: [String], tests: Int)? {
+        guard inputs.config.narrowGate, let selector = inputs.selector, selector.usable, !mutants.isEmpty else { return nil }
+        var union: Set<String> = []
+        for mutant in mutants {
+            guard let selection = selector.selection(for: mutant.id, evenlyEvaluated: true) else { return nil }
+            union.formUnion(selection.onlyTesting)
+        }
+        guard let part = unitSelection(union.sorted(), unit: unit), let tests = part.tests else { return nil }
+        return (part.only, tests)
     }
 
     /// Seconds allowed for one run of a mutant's narrowed tests inside a shared process of `unit` (the part that
@@ -464,9 +500,11 @@ final class MutantExecutor: @unchecked Sendable {
         // An undetected mutant that is in the accepted file is reported as Accepted at the end: said here too, so
         // that the line does not read as if the acceptance had no effect
         let shown = status.isUndetected && acceptedKeys.contains(mutant.key) ? "\(status.rawValue) (accepted)" : status.rawValue
+        let estimate = remainingEstimate()
         progress(String(format: "[%d/%d] #%d %@ %@:%d %@ (%.1fs, %@%@)", executedCount, total,
                         mutant.id, mutant.operator.rawValue, mutant.file, mutant.start.line, shown, seconds, plain ? "" : how + ", ",
-                        RemainingTime.format(remainingEstimate(), formatDuration: RunSession.formatDuration)))
+                        RemainingTime.format(estimate, formatDuration: RunSession.formatDuration)))
+        RunProgress.mutant(index: executedCount, total: total, mutant: mutant, status: status, seconds: seconds, how: plain ? "" : how, remaining: estimate)
     }
 
     /// Call with the lock held. What the mutants without a result still cost, by the kind of run each of them needs.
@@ -479,6 +517,17 @@ final class MutantExecutor: @unchecked Sendable {
         // Everything else is in, or waits for, a shared process (without the option: nothing)
         let shared = inputs.shared == nil ? 0 : left - recheck - confirm - alone
         var remaining = remaining
+        // A shared process that is still running: its time so far (the start of the process and the runs without
+        // mutants included) for the mutants that have had a result since it started. Without this, the estimate
+        // during the first process rests on the runs of the mutants alone, which can be a fraction of a second each
+        // ("roughly 0s left" while most of the time was still to come).
+        if !liveSessions.isEmpty {
+            let now = Date()
+            for live in liveSessions.values {
+                let settled = (executedCount - live.executedAtStart) / liveSessions.count
+                if settled > 0 { remaining.shared.add(now.timeIntervalSince(live.start), count: settled) }
+            }
+        }
         // Before a run against every test was seen in a new process: what such a process costs for narrowed tests,
         // plus the time the whole selection took inside a shared process (the baseline's time holds xcodebuild's)
         if directUsable, let whole = gates.values.map(\.seconds).max() {
@@ -1256,18 +1305,28 @@ final class MutantExecutor: @unchecked Sendable {
                 let sessionStart = Date()
                 guard ensureClean(worker, scope: before) else { break unitLoop }
                 let (index, expected) = locked { () -> (Int, Int?) in
+                    liveSessions[worker.index] = (sessionStart, executedCount)
                     sharedProcesses += 1
                     if launcher == .direct { directSessions += 1 }
                     if gate != .full { ungatedSessions += 1 }
                     return (sharedProcesses, gate != .full ? nil : (units.count == 1 ? setup.expectedTests : unitTests[unit]))
                 }
                 let directory = inputs.session.sessionsDirectory.appendingPathComponent("\(index)")
+                locked { liveSessionDirectories[worker.index] = (directory, Date()) }
                 let entries = todo.compactMap { entry($0, unit: unit) }
+                let narrowedGate = gate == .full ? self.narrowedGate(todo, unit: unit) : nil
+                if let narrowedGate {
+                    locked {
+                        narrowedGates += 1
+                        progress("shared process \(index): the second run without mutants at its start runs the \(narrowedGate.tests) tests of the \(narrowedGate.only.count) suite\(narrowedGate.only.count == 1 ? "" : "s") that its mutants reach (the first runs all \(units.count == 1 ? setup.expectedTests : unitTests[unit] ?? setup.expectedTests) selected tests\(units.count == 1 ? "" : " of the configuration"); --no-narrow-gate makes both runs of all)")
+                    }
+                }
                 var limits: [Int: Double] = [:]
                 for mutant in todo { limits[mutant.id] = sessionLimit(mutant, unit: unit) }
                 let isLastUnit = unit == units.count - 1
                 let outcome = try SharedProcess.runSession(.session(entries), setup: setup, unit: unit, launcher: launcher, expectedTests: expected,
-                                                           xcode: worker.xcode, directory: directory, gate: gate, limits: limits) { events in
+                                                           xcode: worker.xcode, directory: directory, gate: gate, limits: limits,
+                                                           narrowedGate: narrowedGate) { events in
                     // Final verdicts are recorded while the process is still running the other mutants
                     guard isLastUnit, events.gatePassed else { return }
                     if gate == .full {
@@ -1286,6 +1345,8 @@ final class MutantExecutor: @unchecked Sendable {
                     }
                 }
                 try locked {
+                    liveSessions[worker.index] = nil
+                    liveSessionDirectories[worker.index] = nil
                     sharedSeconds += outcome.duration
                     // Failing runs inside the process, a crash or a hang may have left something on the destination
                     let events = outcome.events
@@ -1296,16 +1357,22 @@ final class MutantExecutor: @unchecked Sendable {
                     if let reason = outcome.unusable {
                         if launcher == .direct {
                             // Not a statement about shared processes: try again with xcodebuild as the launcher
-                            sharedProcesses -= 1
-                            directSessions -= 1
+                            let judged = events.gatePassed
+                            if !judged {
+                                sharedProcesses -= 1
+                                directSessions -= 1
+                            }
                             giveUpDirectLaunch(Self.reasonWithEvidence(reason, of: outcome, directory: directory, logs: inputs.session.logsDirectory, number: index))
                             directGivenUpBySession = true
+                            // A process that was lost after it had judged mutants (it went to the background): what it
+                            // settled stands, and the rest is handled as after any lost process (below), under xcodebuild
+                            if !judged { return }
                         } else {
                             sharedUnusable = reason
                             // The same happens under xcodebuild: it was not about who starts the host
                             if directGivenUpBySession { warnings.removeAll { $0.kind == "directLaunchUnavailable" } }
+                            return
                         }
-                        return
                     }
                     if gate == .full {
                         if let tests = outcome.events.controls[1]?.tests { unitTests[unit] = tests }

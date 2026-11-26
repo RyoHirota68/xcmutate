@@ -46,7 +46,7 @@ Count the mutants of the change:
 xcmutate list --since <base>
 ```
 
-Without file arguments, `list --since` looks at the files that `run --since` would mutate. Uncommitted changes count. The last line gives the totals (`16 mutants, 1 ignored, 3 files`). If it says 0 mutants, tell the user that the change has no code that the tool mutates, and stop.
+Without file arguments, `list --since` looks at the files that `run --since` would mutate. Uncommitted changes count. Give `list` the same `--package` as the run: with a subdirectory (`--package Shop`), both look only at the files below it. The last line gives the totals (`16 mutants, 1 ignored, 3 files`). If it says 0 mutants, tell the user that the change has no code that the tool mutates, and stop.
 
 "Ignored" candidates are places that the tool deliberately does not mutate (for example a call that is the return value of its function). They are not gaps. `xcmutate list --since <base> --show-ignored` shows them with the reason, and so does `ignored[]` in `agent.json`.
 
@@ -72,6 +72,7 @@ xcmutate run --since <base> \
   [--only-testing <UnitTestTarget>] \
   --max-mutants 50 --time-limit 20m \
   --reporter agent --json-output "$OUT/report.json" \
+  --progress-file "$OUT/progress.jsonl" \
   > "$OUT/agent.json"
 ```
 
@@ -79,6 +80,7 @@ xcmutate run --since <base> \
 - `--max-mutants 50` and `--time-limit 20m` bound the first run. With more than 50 mutants the tool examines a sample; the report says how many were left out. When the time is up the tool stops and reports what it has; `pendingCount` says how many were not run.
 - `agent.json` is the report you read: the gaps, and the result of every mutant by key (`results[]`). `report.json` is the full report; `accept` reads it in step 7. Progress goes to standard error.
 - The tool works on a copy of the repository and does not modify the working tree.
+- `progress.jsonl` says how far the run is, one JSON object per line. If you expect the run to take more than a few minutes and can run it in the background, do so, and read the last lines of the file every few minutes. Tell the user the phase (`phaseStart`: build, baseline, mutants), how many mutants have a result (`index` and `total` of the last `mutant` line) and the time left (`remainingSeconds`). A `heartbeat` line comes when nothing else has happened for a minute; its `hint` says how far a long build or baseline is. The run is over when a `runEnd` line with `exitCode` is there; then read `agent.json`.
 
 To make a long run shorter, in this order:
 

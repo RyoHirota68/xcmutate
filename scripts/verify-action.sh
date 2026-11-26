@@ -121,6 +121,8 @@ CHECK="the outputs score, undetected and report are set"
 check bash -c "[ -n '$(output score)' ] && [ '$(output undetected)' -ge 1 ] && [ -f '$(output report)' ]"
 CHECK="the JSON, Markdown and HTML reports are in the report directory"
 check test -s "$OUT/reports-gate/mutation.json" -a -s "$OUT/reports-gate/mutation.md" -a -s "$OUT/reports-gate/mutation.html"
+CHECK="the progress file is in the report directory and ends with the exit code of the run (3)"
+check bash -c "tail -n 1 '$OUT/reports-gate/progress.jsonl' | /usr/bin/python3 -c 'import json,sys; e=json.loads(sys.stdin.read()); sys.exit(0 if e[\"event\"] == \"runEnd\" and e[\"exitCode\"] == 3 and e[\"version\"] == 1 else 1)' && grep -q '\"event\":\"mutant\"' '$OUT/reports-gate/progress.jsonl'"
 EXIT_CODE="$(output exit-code)" "$REPO/action/result.sh" >"$OUT/result.out" 2>&1
 result=$?
 CHECK="result.sh fails the job with that code and says why"
