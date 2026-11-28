@@ -64,18 +64,27 @@ brew install RyoHirota68/tap/xcmutate
 
 ## クイックスタート
 
-### Swift パッケージ
+### init でプロジェクトを設定する
 
-パッケージのディレクトリで、次を実行します。スキーム名は `xcodebuild -list` で分かります。
+`xcmutate init` はプロジェクトを試し、以降の実行で使うオプションを設定ファイルに書きます。アプリの場合は、先にシミュレータを起動して、起動したままにしておきます。Swift パッケージの場合は、パッケージのディレクトリで `xcmutate init` だけを実行します。スキームが複数あるプロジェクトでは `--scheme <名前>` を付けます。
 
 ```bash
-xcmutate run --package . --scheme <scheme> --destination 'platform=macOS'
+xcrun simctl boot <SIMULATOR-UDID>    # UDID は xcrun simctl list devices で分かる
+xcmutate init --destination 'id=<SIMULATOR-UDID>'
 ```
 
-上のパッケージでは、レポートの最後は次のようになります。
+`init` は、ワークスペース・プロジェクト・パッケージと、そのスキーム、ユニットテストのターゲットを見つけます。続けて少数のミュータント（既定は 10 個）を、既定の方式と速い方式の 2 通りで試し、`run` と、プロファイル `pr`・`nightly` を `xcmutate.yml` に書きます。それぞれの選択の理由はコメントとして書かれます。速い方式は、既定の方式と同じ判定を出し、ミュータント1個あたりの時間が短かったときだけプロファイルに入ります。`init` はプロジェクトを少なくとも 3 回ビルドし、試すミュータントごとにテストを実行するので、大きなアプリでは数分以上かかります。何を書くか、どんなときにファイルを上書きしないかは [docs/usage.md](docs/usage.md#init) にあります。
+
+あとは、ブランチで次を実行します。
+
+```bash
+xcmutate run --profile pr
+```
+
+`pr` プロファイルは、既定のブランチ（`init` が見つけた場合。たとえば `origin/main`）から変更した行を対象にします。上のパッケージを追加したブランチでは、レポートの最後は次のようになります。
 
 ```
-xcmutate 0.15.0: 2 mutants (scope: all)
+xcmutate 0.15.0: 2 mutants (scope: diff)
   Killed 1, Survived 1
   …
 Survived / not reached:
@@ -85,17 +94,21 @@ Survived / not reached:
 
 Survived のミュータントが抜けです。`>` を `>=` に変えても、テストは全部通りました。価格 100 のテストを足したら、`key` を `--only` に渡して、そのミュータントだけを実行し直します。`run` はリポジトリの複製に対して動くので、手元のファイルを書き換えません。
 
-### iOS シミュレータ上のアプリ
+### 設定ファイルを使わずに実行する
 
-先にシミュレータを起動して、起動したままにしておきます。起動していないとミュータント1個ごとに起動し直すので、数倍遅くなります。実際のプロジェクトでは、`--since origin/main` で変更した行だけを対象にします。
+オプションはすべてコマンドラインでも指定できます。Swift パッケージでは、パッケージのディレクトリで次を実行します（スキーム名は `xcodebuild -list` で分かります）。
 
 ```bash
-xcrun simctl boot <SIMULATOR-UDID>    # UDID は xcrun simctl list devices で分かる
+xcmutate run --package . --scheme <scheme> --destination 'platform=macOS'
+```
+
+iOS シミュレータ上のアプリでは、先にシミュレータを起動して、起動したままにしておきます。起動していないとミュータント1個ごとに起動し直すので、数倍遅くなります。`--since origin/main` で、変更した行だけを対象にします。
+
+```bash
+xcrun simctl boot <SIMULATOR-UDID>
 xcmutate run --since origin/main --workspace App.xcworkspace --scheme App \
   --destination 'id=<SIMULATOR-UDID>' --only-testing AppTests
 ```
-
-繰り返し実行するプロジェクトでは、`xcmutate init`（シミュレータなら `--destination` を付けます）が、少数のミュータントを既定の方式と速い方式で試し、設定ファイル `xcmutate.yml` にプロファイルを書きます。それぞれの選択の理由はコメントとして書かれます。試すミュータントは、指定したファイル、`--path <ディレクトリ>`、またはカレントディレクトリから選びます。速い方式は、同じ判定を出し、ミュータント1個あたりの時間が短かったときだけプロファイルに入ります。以降は `xcmutate run --profile pr` だけで実行できます。
 
 複製には、git が無視するファイルは入りません。git が無視するファイル（`Pods`・手元の `.xcconfig`・生成した Xcode プロジェクトなど）がビルドに要る場合は、`--prepare` で複製の中に作ります。たとえば `--prepare 'xcodegen generate'` です（[docs/usage.md](docs/usage.md#when-the-build-cannot-find-a-file)）。
 

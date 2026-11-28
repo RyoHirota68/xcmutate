@@ -62,18 +62,27 @@ brew install RyoHirota68/tap/xcmutate
 
 ## Quick start
 
-### A Swift package
+### Set up a project with init
 
-In the package directory, run this. `xcodebuild -list` shows the scheme name.
+`xcmutate init` tries the project and writes the options for later runs into a config file. For an app, boot a simulator first and leave it running; for a Swift package, run `xcmutate init` alone in the package directory. Add `--scheme <name>` when the project has more than one scheme.
 
 ```bash
-xcmutate run --package . --scheme <scheme> --destination 'platform=macOS'
+xcrun simctl boot <SIMULATOR-UDID>    # the UDID from xcrun simctl list devices
+xcmutate init --destination 'id=<SIMULATOR-UDID>'
 ```
 
-For the package above, the report ends like this:
+`init` finds the workspace, project or package, its scheme and its unit-test targets. It then runs a sample of mutants (10 by default) twice, in the default mode and in the faster modes, and writes `xcmutate.yml` with a `run` object and the profiles `pr` and `nightly`, each choice with its reason as a comment. A faster mode goes into a profile only when it gave the same verdicts as the default mode and took less time per mutant. `init` builds the project at least three times and runs the tests for each mutant of the sample, so on a large app it takes several minutes or more. [docs/usage.md](docs/usage.md#init) describes what it writes and when it refuses to overwrite a file.
+
+Then, on a branch:
+
+```bash
+xcmutate run --profile pr
+```
+
+The `pr` profile mutates the lines changed since the default branch (`origin/main`, for example, when `init` found one). On a branch that added the package above, the report ends like this:
 
 ```
-xcmutate 0.15.0: 2 mutants (scope: all)
+xcmutate 0.15.0: 2 mutants (scope: diff)
   Killed 1, Survived 1
   …
 Survived / not reached:
@@ -83,17 +92,21 @@ Survived / not reached:
 
 The Survived mutant is a gap: with `>` changed to `>=`, every test still passed. Add a test for a price of 100, then pass the `key` to `--only` to run that mutant again. `run` works on a copy of the repository and does not modify your files.
 
-### An app on an iOS simulator
+### Run without a config file
 
-Boot the simulator first and leave it running; otherwise every mutant boots it again, which is several times slower. On a real project, `--since origin/main` mutates only the lines you changed:
+All options can also be given on the command line. For a Swift package, in the package directory (`xcodebuild -list` shows the scheme name):
 
 ```bash
-xcrun simctl boot <SIMULATOR-UDID>    # the UDID from xcrun simctl list devices
+xcmutate run --package . --scheme <scheme> --destination 'platform=macOS'
+```
+
+For an app on an iOS simulator, boot the simulator first and leave it running; otherwise every mutant boots it again, which is several times slower. `--since origin/main` mutates only the lines you changed:
+
+```bash
+xcrun simctl boot <SIMULATOR-UDID>
 xcmutate run --since origin/main --workspace App.xcworkspace --scheme App \
   --destination 'id=<SIMULATOR-UDID>' --only-testing AppTests
 ```
-
-For a project that you will run often, `xcmutate init` (with `--destination` for the simulator) tries a sample of mutants in the default and the faster modes and writes profiles into the config file `xcmutate.yml`, with the reason for each choice as a comment. The sample comes from the files you name, `--path <directory>`, or the current directory. A faster mode goes into a profile only when it gave the same verdicts and took less time per mutant. Then `xcmutate run --profile pr` is the whole command.
 
 The copy leaves out files that git ignores. If the build needs some of them, such as `Pods`, a local `.xcconfig` or a generated Xcode project, create them in the copy with `--prepare`, for example `--prepare 'xcodegen generate'` ([docs/usage.md](docs/usage.md#when-the-build-cannot-find-a-file)).
 
