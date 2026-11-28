@@ -4,7 +4,7 @@ import Foundation
 
 enum VariantResult { case hasVariant, noVariant, unknown }
 
-// O6: xcmutate.config.json の aridCalls で対象外にする呼び出し
+// O6: xcmutate.yml の aridCalls で対象外にする呼び出し
 enum FixtureAnalytics {
     static func send(_ name: String, _ flag: Bool) {}
 }

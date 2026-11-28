@@ -18,7 +18,7 @@ xcmutate is a mutation testing tool for Swift and Xcode projects. It changes you
 
 It works with XCTest and Swift Testing, on macOS and iOS simulators. UI tests are not supported ([What you need](#what-you-need)).
 
-> This is an early version (0.14.0; the first release was 0.13.0). Options and report formats may still change before 1.0.
+> This is an early version (0.15.0; the first release was 0.13.0). Options and report formats may still change before 1.0.
 
 ## What code coverage does not show
 
@@ -73,7 +73,7 @@ xcmutate run --package . --scheme <scheme> --destination 'platform=macOS'
 For the package above, the report ends like this:
 
 ```
-xcmutate 0.14.0: 2 mutants (scope: all)
+xcmutate 0.15.0: 2 mutants (scope: all)
   Killed 1, Survived 1
   …
 Survived / not reached:
@@ -92,6 +92,8 @@ xcrun simctl boot <SIMULATOR-UDID>    # the UDID from xcrun simctl list devices
 xcmutate run --since origin/main --workspace App.xcworkspace --scheme App \
   --destination 'id=<SIMULATOR-UDID>' --only-testing AppTests
 ```
+
+For a project that you will run often, `xcmutate init` (with `--destination` for the simulator) tries a sample of mutants in the default and the faster modes and writes profiles into the config file `xcmutate.yml`, with the reason for each choice as a comment. The sample comes from the files you name, `--path <directory>`, or the current directory. A faster mode goes into a profile only when it gave the same verdicts and took less time per mutant. Then `xcmutate run --profile pr` is the whole command.
 
 The copy leaves out files that git ignores. If the build needs some of them, such as `Pods`, a local `.xcconfig` or a generated Xcode project, create them in the copy with `--prepare`, for example `--prepare 'xcodegen generate'` ([docs/usage.md](docs/usage.md#when-the-build-cannot-find-a-file)).
 
@@ -143,7 +145,7 @@ xcmutate therefore gives a verdict only with evidence. For a Survived it needs a
 
 ## How fast it is
 
-The time per mutant is mostly the time of one run of the tests that can detect it, plus the launch of the test process. So a small package and a large app differ by an order of magnitude, and the numbers below must be read with their conditions. They were measured with version 0.13.0 on one Mac that was running other builds, mostly in single runs.
+The time per mutant is mostly the time of one run of the tests that can detect it, plus the launch of the test process. So a small package and a large app differ by an order of magnitude, and the numbers below must be read with their conditions. The table was measured with version 0.13.0 on one Mac that was running other builds, mostly in single runs.
 
 | Project | Tests run per mutant | Options | Time per mutant |
 |---|---|---|---|
@@ -153,9 +155,21 @@ The time per mutant is mostly the time of one run of the tests that can detect i
 | | | `--shared-process` | 1.4 s |
 | A large production iOS app, on a simulator | about 1,200 tests, about 45 s | `--select-tests reach --shared-process` | 22 to 24 s |
 
+The same large app was measured again with 0.15.0, on 33 mutants, one run of each setting at a time when the Mac had little else to do. The times are for the whole run.
+
+| Version | Options | Whole run |
+|---|---|---:|
+| 0.13.0 | `--select-tests reach --shared-process` | 1,162 s |
+| 0.15.0 | `--select-tests reach --shared-process` | 1,147 s |
+| 0.15.0 | `--select-tests reach --shared-process --confirm-kills restore` | 984 s |
+
+With `--confirm-kills restore`, 9 of the 12 runs without mutants after a detection were replaced by putting the simulator back. The four runs of this comparison gave the same verdicts: 28 Killed and 5 Crash.
+
 A run is slow when the selected tests are long, or when many mutants survive, crash or hang. Mutating a whole large app in one go is not practical; use `--since`, a nightly run, or a sample with `--max-mutants`. [docs/speed.md](docs/speed.md) has the measurements and says when each option helps.
 
 `--shared-process` runs many mutants in one test process instead of launching the tests for each. It is off by default because it needs tests that pass twice in a row in one process. `--shared-process auto` uses it only when the baseline's times say that it saves time for the number of mutants.
+
+For an app whose tests take many minutes, the steps that run all tests dominate. `--select-tests impact` chooses the tests of a pull request from a map that a nightly run wrote (the results then hold among those tests), `--stop-when-gate-decided` ends a CI run as soon as its gate's result is known, and `--confirm-kills restore` puts the simulator back instead of running the tests after a detection. [docs/speed.md](docs/speed.md) says what each costs and assumes.
 
 ## How it differs from Muter
 
@@ -172,10 +186,10 @@ Muter is the better choice if you want a tool with a longer history, need UI tes
 | Page | Content |
 |---|---|
 | [Getting started](docs/getting-started.md) | A first run, reading the report, closing a gap |
-| [Usage reference](docs/usage.md) | Every subcommand (`run`, `accept`, `clean`, `list`, `instrument`) and option, with a glossary |
+| [Usage reference](docs/usage.md) | Every subcommand (`run`, `init`, `accept`, `clean`, `list`, `instrument`) and all options, with a glossary; the keys of the config file |
 | [Limitations](docs/limitations.md) | What is not supported, what has not been verified yet, and known issues |
 | [Reports](docs/reports.md) | Result kinds, scores, report formats, warnings, gates and exit codes |
-| [Configuration](docs/configuration.md) | The config file, which files are mutated, disable comments |
+| [Configuration](docs/configuration.md) | The config file (`xcmutate.yml`), which files are mutated, disable comments |
 | [Operators](docs/operators.md) | The 27 mutation operators (19 on by default) and the rule behind the defaults |
 | [Speed](docs/speed.md) | Measurements, and what makes a run faster |
 | [CI](docs/ci.md) | The GitHub Action, example workflows, a shell script, time budgets |

@@ -2,20 +2,24 @@
 
 Three things shape what is mutated: a config file, the rules that select files, and comments in the source. A fourth file records accepted mutants.
 
-## xcmutate.config.json
+## xcmutate.yml
 
-`run`, `list` and `instrument` read `xcmutate.config.json` from `--root`. For all three the default root is the git top-level directory of the current directory (outside a git repository, the current directory). `--config <path>` names another file. The file is meant to be committed. Every key is optional.
+`run`, `list` and `instrument` read `xcmutate.yml` from `--root`. For all three the default root is the git top-level directory of the current directory (outside a git repository, the current directory). `--config <path>` names another file. The file is meant to be committed. Every key is optional.
 
-```json
-{
-  "aridCalls": ["Analytics", "CrashReporter", "sendEvent"],
-  "disabledOperators": ["normalization-removal"],
-  "enabledOperators": ["arithmetic"],
-  "maxSwitchesPerExpression": 12,
-  "exclude": ["Sources/Generated/**", "fastlane", "!Sources/Generated/Handwritten.swift"],
-  "excludeDeclarations": ["*ForTesting", "*ForPreview"]
-}
+```yaml
+# Calls that tests do not and should not assert
+aridCalls: [Analytics, CrashReporter, sendEvent]
+disabledOperators: [normalization-removal]
+enabledOperators: [arithmetic]
+maxSwitchesPerExpression: 12
+exclude:
+  - "Sources/Generated/**"
+  - fastlane
+  - "!Sources/Generated/Handwritten.swift"   # written by hand
+excludeDeclarations: ["*ForTesting", "*ForPreview"]
 ```
+
+Quote a pattern that starts with `*`, `!`, `&` or another character that YAML reads as syntax.
 
 | Key | Meaning |
 |-----|---------|
@@ -26,16 +30,20 @@ Three things shape what is mutated: a config file, the rules that select files, 
 | `exclude` | File patterns to exclude; see below |
 | `excludeDeclarations` | Names of declarations whose bodies are not mutated. A pattern is compared with the name (without the parameter list) of every declaration that encloses a candidate: the function, the property, the type. `*` stands for any text; without `*` the whole name must be equal. Candidates left out are listed as ignored with the reason `excluded-declaration`. Default: empty; see below |
 
-- An unknown key is not ignored silently: it raises a warning on stderr and in the report (`warnings`, kind `config`). A typo should not quietly do nothing.
-- A file that is not valid JSON, or a value of the wrong type, stops the tool with a message naming the file and the key.
+- `run` and `profiles` hold options of `run` ([usage.md](usage.md#run-options-in-the-config-file-run-and-profiles)); `xcmutate init` writes them.
+- Explanations go into comments (`# …`).
+- Values are read with the types of JSON (YAML 1.2): only `true` and `false` are booleans, only decimal numbers are numbers, and anything else without quotes is a string (`yes`, `no`, `on`, `off` and `08` among them). A key that is there twice, a merge key (`<<`), a number out of range and a tag other than the standard ones stop the tool. An alias (`*name`) stands for the value of its anchor.
+- An unknown key is not ignored silently: it raises a warning on stderr and in the report (`warnings`, kind `config`), with a link to this page. A typo should not quietly do nothing.
+- A file that is not valid YAML, or a value of the wrong type, stops the tool with a message naming the file and the key.
+- The file may also be named `xcmutate.yaml`. `xcmutate.config.json`, the JSON file of versions up to 0.14, is still read, with the same keys; there, keys that start with `_` are explanations and are not read. When more than one of these files is at the root, the tool stops (exit code 64) and names them. `xcmutate init --force` moves the settings of the JSON file into the YAML file and removes it ([usage.md](usage.md#init)). A path given with `--config` is read as JSON when it ends in `.json`, as YAML otherwise.
 - The command-line options `--arid`, `--disable-operator`, `--enable-operator` and `--exclude` add to the file's values.
 
 Code that exists for the tests (`excludeDeclarations`). Product code often carries helpers that only the tests call, usually inside `#if DEBUG`: `resetForTesting()`, `_setClockForTesting(_:)`, `makeStubForPreview()`. Tests call them to prepare a state, not to check it. Their mutants are reached and then survive, or change nothing that a test looks at, so they add noise to a report.
 
 Such helpers are not excluded by default, for two reasons. Which names mean "only for the tests" is a convention of each project (`reset…` is also the name of real features). And `#if DEBUG` alone says nothing: debug-only *behavior* deserves tests like any other. Name your convention once:
 
-```json
-{ "excludeDeclarations": ["*ForTesting", "*ForTests", "*ForPreview"] }
+```yaml
+excludeDeclarations: ["*ForTesting", "*ForTests", "*ForPreview"]
 ```
 
 A pattern can also name a type (`"DebugMenu*"`): everything declared inside it is left out. To leave out a single declaration without a naming convention, put `// xcmutate:disable` … `// xcmutate:enable` around it.

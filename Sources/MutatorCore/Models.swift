@@ -349,7 +349,7 @@ public struct GeneratorOptions: Sendable {
         "lock", "unlock", "tryLock", "signal", "wait", "broadcast", "enter", "leave",
     ]
 
-    /// Arid calls added by configuration (`aridCalls` in `xcmutate.config.json` / `--arid`).
+    /// Arid calls added by configuration (`aridCalls` in `xcmutate.yml` / `--arid`).
     /// A call is treated as arid if the text of the called expression matches one of these, starts with `<pattern>.` / `<pattern>(`,
     /// or its last name (method or function name) matches one of these (e.g. `Crashlytics`, `LoginAnalytics`, `sendAnalytics`).
     public var aridCallPatterns: [String] = []

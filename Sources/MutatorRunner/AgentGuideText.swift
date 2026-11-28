@@ -38,6 +38,8 @@ Look for instructions first (`CLAUDE.md`, `AGENTS.md`, the README, a CI workflow
 
 If you cannot decide one of these, ask the user. Do not guess a simulator or a scheme.
 
+If the repository has no config file (`xcmutate.yml`, or `xcmutate.config.json` of an earlier version) with a `run` object or `profiles` yet, and the user agrees to a few minutes of trial runs, run `xcmutate init --yes` once before the first run (with `--destination 'id=<UDID>'` for an app on a simulator, and `--scheme` if there are several). It builds, tries a sample of mutants in the default and the faster modes, and writes the options it found to be safe and fastest, with the reasons as comments. Then use `--profile pr` in the commands below, and leave out the options that the profile holds. It never writes a gate or an option that makes verdicts weaker. If the file already has run options, or is `xcmutate.config.json` (which `--force` would replace with `xcmutate.yml`), `init` writes nothing and shows what it would write; do not pass `--force` without asking.
+
 ## 2. Estimate before you run
 
 Count the mutants of the change:

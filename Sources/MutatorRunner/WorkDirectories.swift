@@ -118,3 +118,40 @@ public enum CanonicalPath {
         return rest.reduce(base) { $0 == "/" ? "/" + $1 : $0 + "/" + $1 }
     }
 }
+
+/// The lock files that `xcodebuild` leaves in the temporary directory for the package state of a DerivedData directory
+/// (`<path of SourcePackages with / as _>_Package.resolved.lock`, `…_workspace-state.json.lock`): a pair per DerivedData
+/// directory, which `xcodebuild` never removes. Only the names made from the given directory are touched.
+public enum PackageLockFiles {
+    static func names(derivedData: URL, among names: [String]) -> [String] {
+        let paths = Set([derivedData.standardizedFileURL.path, derivedData.resolvingSymlinksInPath().path, CanonicalPath.of(derivedData)])
+        let prefixes = paths.map { ($0 + "/SourcePackages").replacingOccurrences(of: "/", with: "_") + "_" }
+        return names.filter { name in name.hasSuffix(".lock") && prefixes.contains { name.hasPrefix($0) } }.sorted()
+    }
+
+    /// The lock files of the DerivedData directories that `xcodebuild` makes below `location` (the user default
+    /// `IDECustomDerivedDataLocation`: `<location>/<name>-<hash>/SourcePackages`).
+    static func names(under location: URL, among names: [String]) -> [String] {
+        let paths = Set([location.standardizedFileURL.path, location.resolvingSymlinksInPath().path, CanonicalPath.of(location)])
+        let prefixes = paths.map { $0.replacingOccurrences(of: "/", with: "_") + "_" }
+        return names.filter { name in name.hasSuffix(".lock") && name.contains("_SourcePackages_") && prefixes.contains { name.hasPrefix($0) } }.sorted()
+    }
+
+    /// Removes those of `under(location)`, once nothing builds there any more.
+    public static func remove(under location: URL) {
+        let directory = FileManager.default.temporaryDirectory
+        let all = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        for name in names(under: location, among: all) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+    }
+
+    /// Removes them, once nothing builds in `derivedData` any more.
+    public static func remove(derivedData: URL) {
+        let directory = FileManager.default.temporaryDirectory
+        let all = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        for name in names(derivedData: derivedData, among: all) {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+    }
+}

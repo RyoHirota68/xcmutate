@@ -52,6 +52,9 @@ rm -f "${TMPDIR:-/tmp}/xcmutate-regression-state-leak.log" "${TMPDIR:-/tmp}/xcmu
 # State left behind by one mutant's run must not kill the next mutant
 run StateLeak one-process-per-mutant StateLeak
 run StateLeak shared-process StateLeak --shared-process
+run StateLeak shared-process-to-the-end StateLeak --shared-process --no-stop-at-first-failure
+# --confirm-kills restore needs an iOS simulator: on macOS the runs without mutants are made as with auto, same verdicts
+run StateLeak restore-on-macos StateLeak --confirm-kills restore
 # State left in a shared process by a mutant whose tests pass; workers that share the Mac
 run SharedState one-process-per-mutant SharedState --skip-testing SharedStateTests/LockTests
 run SharedState shared-process SharedState --skip-testing SharedStateTests/LockTests --shared-process
@@ -92,6 +95,7 @@ rm -f "${TMPDIR:-/tmp/}xcmutate-regression-leftover-elsewhere.marker" "${TMPDIR:
 run LeftoverElsewhere one-process-per-mutant LeftoverElsewhere
 run LeftoverElsewhere reach LeftoverElsewhere --select-tests reach
 run LeftoverElsewhere reach-shared LeftoverElsewhere --select-tests reach --shared-process
+run LeftoverElsewhere restore-on-macos LeftoverElsewhere --confirm-kills restore
 EXPECTED=expected-no-recheck.json
 run LeftoverElsewhere reach-shared-xcodebuild-no-recheck LeftoverElsewhere --select-tests reach --shared-process --no-direct-launch --no-recheck-survivors
 EXPECTED=expected.json
@@ -112,9 +116,14 @@ EXPECTED=expected.json
 # the switches are then evaluated unequally often in the two runs, and their mutants go to a process of their own.
 run OnceOutsideGate one-process-per-mutant OnceOutsideGate
 run OnceOutsideGate reach OnceOutsideGate --select-tests reach
+run OnceOutsideGate reach-shared-to-the-end OnceOutsideGate --select-tests reach --shared-process --no-stop-at-first-failure
+# The mutants that go back to run alone against all tests are run by the driver and stopped at their first failing
+# test (in a host started by the tool, and under xcodebuild)
+EXPECTED=expected-stopped.json
 run OnceOutsideGate reach-shared OnceOutsideGate --select-tests reach --shared-process
 run OnceOutsideGate reach-shared-xcodebuild OnceOutsideGate --select-tests reach --shared-process --no-direct-launch
 run OnceOutsideGate reach-shared-wide-gate OnceOutsideGate --select-tests reach --shared-process --no-narrow-gate
+EXPECTED=expected.json
 
 for fixture in StateLeak SharedState Shapes StateAcrossSuites DependentSuites LeftoverElsewhere HiddenByOtherSuite OnceOutsideGate; do
   if [ -z "$ONLY" ] || [ "$ONLY" = "$fixture" ]; then "$BIN" clean --work-dir "$OUT/work-$fixture" >/dev/null 2>&1 || true; fi

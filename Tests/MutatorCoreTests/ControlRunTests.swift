@@ -669,11 +669,58 @@ struct ControlRunTests {
                 #expect(FileManager.default.fileExists(atPath: kept.directory.appendingPathComponent(file).path))
             }
             #expect(kept.note.contains(kept.directory.path))
-            #expect(kept.note.contains("last output of the host: first line | the app says why | last line"))
+            #expect(kept.note.contains("The last lines the host wrote: first line | the app says why | last line."))
+            #expect(kept.note.contains("the first lines of \(kept.directory.appendingPathComponent("host.log").path)"))
             // A host that wrote nothing
             let empty = directory.appendingPathComponent("shared-process/2")
             try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
-            #expect(SharedProcess.keepEvidence(sessionDirectory: empty, logs: logs, name: "direct-launch-2").note.contains("the host wrote nothing"))
+            #expect(SharedProcess.keepEvidence(sessionDirectory: empty, logs: logs, name: "direct-launch-2").note.contains("The host wrote nothing."))
+        }
+    }
+
+    /// A test target without a host app: the tool starts the `xctest` agent with its driver bundle, and when the agent
+    /// cannot load the bundle it writes the reason first and then its whole environment. The warning showed the last
+    /// three lines, a part of that environment ("I really don't know what this means"). The output is what the agent of
+    /// Xcode 27.2 wrote on an iOS 27.2 simulator for a bundle that is not there.
+    @Test func theWarningQuotesWhyTheAgentStoppedAndNotItsEnvironment() throws {
+        let output = """
+        Usage: xctest [-XCTest <TestClassOne/testMethodA>(,...)] <path to test bundle>
+
+        Failure: No test bundle found at path `/w/shared-process/driver-1/XCMutateSharedProcess.xctest`.
+
+        Displaying process arguments and environment for debugging purposes:
+        Arguments: (
+            "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Xcode/Agents/xctest",
+            "-XCTest",
+            "XCMutateSharedProcess/testRunMutants",
+            "/w/shared-process/driver-1/XCMutateSharedProcess.xctest"
+        )
+        Environment: {
+            HOME = "/Users/USER/Library/Developer/CoreSimulator/Devices/AAAAAAAA-0000-0000-0000-000000000001/data";
+            "__XPC_DYLD_FRAMEWORK_PATH" = "/w/DerivedData/Build/Products/Debug-iphonesimulator";
+            "__XPC_DYLD_LIBRARY_PATH" = "/w/DerivedData/Build/Products/Debug-iphonesimulator";
+        }
+        """
+        let reason = SharedProcess.hostReason(inOutput: output)
+        #expect(reason.chosen)
+        #expect(reason.lines == ["Failure: No test bundle found at path `/w/shared-process/driver-1/XCMutateSharedProcess.xctest`.",
+                                 "Usage: xctest [-XCTest <TestClassOne/testMethodA>(,...)] <path to test bundle>"])
+        // The dynamic loader
+        let dyld = "dyld[4711]: Library not loaded: @rpath/Kit.framework/Kit\n  Referenced from: <UUID> /w/Tests.xctest/Tests\n  Reason: tried: '/w/Kit.framework/Kit' (no such file)\n"
+        #expect(SharedProcess.hostReason(inOutput: dyld).lines == ["dyld[4711]: Library not loaded: @rpath/Kit.framework/Kit", "Reason: tried: '/w/Kit.framework/Kit' (no such file)"])
+        // Nothing known: the last lines, said as such
+        #expect(SharedProcess.hostReason(inOutput: "a\nb\nc\nd\n") == (["b", "c", "d"], false))
+
+        try withTemporaryDirectory { directory in
+            let session = directory.appendingPathComponent("shared-process/1")
+            let logs = directory.appendingPathComponent("logs")
+            try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+            try output.write(to: session.appendingPathComponent("host.log"), atomically: true, encoding: .utf8)
+            try "command".write(to: session.appendingPathComponent("launch.txt"), atomically: true, encoding: .utf8)
+            let note = SharedProcess.keepEvidence(sessionDirectory: session, logs: logs, name: "direct-launch-1").note
+            #expect(note.hasPrefix("What the host said: Failure: No test bundle found at path"))
+            #expect(!note.contains("__XPC_DYLD"))
         }
     }
 

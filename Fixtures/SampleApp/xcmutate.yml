@@ -1,0 +1,21 @@
+# The config file of the fixture (scripts/verify-fixture.sh compares the results with expected.json).
+
+# O6: calls that are left alone
+aridCalls:
+  - FixtureAnalytics
+
+# Operators that are off by default, turned on to check them
+enabledOperators:
+  - arithmetic
+  - closure-statement-removal
+  - compound-assignment
+  - condition-removal
+  - guard-removal
+  - implicit-return-value
+  - return-case
+  - try-optional-nil
+
+# X13: a glob that leaves files out, and one that brings a file back
+exclude:
+  - "SampleApp/Excluded/**"
+  - "!SampleApp/Excluded/Kept.swift"

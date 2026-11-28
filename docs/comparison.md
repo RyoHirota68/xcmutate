@@ -17,6 +17,12 @@ When Muter is the better choice:
 - You need UI test suites, tvOS or watchOS. Muter's README says it supports them; xcmutate does not support UI tests and was not tried on those platforms.
 - Your tests are started by something other than `xcodebuild`. Muter's configuration takes any executable (`swift`, `fastlane`, `make`); xcmutate drives `xcodebuild` only (a contribution that changes this is welcome; see [CONTRIBUTING.md](../CONTRIBUTING.md#what-to-contribute-and-how)).
 
+## Reusing earlier runs
+
+Other mutation testing tools reuse the results of earlier runs. As their documentation describes it: [PIT's incremental analysis](https://pitest.org/quickstart/incremental_analysis/) (experimental) keeps a history file and takes over a Killed when neither the class nor the killing test changed, and a Survived when no new test covers it and the covering tests did not change; it says that all but one of its optimisations "introduce a degree of potential error". [StrykerJS's incremental mode](https://stryker-mutator.io/docs/stryker-js/incremental/) matches mutants and tests to the previous report with a diff and reuses their results; it runs its dry run (test discovery and per-mutant coverage) every time, and lists changes it cannot detect, such as updated dependencies, environment variables and snapshot files. [Stryker.NET](https://stryker-mutator.io/docs/stryker-net/configuration/) (`since` and baseline, experimental) resets the mutants affected by changed sources or tests and says that false positives and negatives are possible. (Read on 2026-11-27.)
+
+xcmutate's `--reuse` takes over only a Killed, and only while no product file changed at all. `--select-tests impact` reuses no verdict: it takes from an earlier run only which suites ran which file, to choose the tests, and runs everything it reports. That is slower than reusing results, and its results hold among the chosen suites.
+
 ## What was not compared
 
 - Speed. Muter was not run, so the two tools were never measured under the same conditions. [speed.md](speed.md) has measurements of xcmutate on two of the sample projects that ship with Muter.

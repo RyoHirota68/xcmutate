@@ -30,7 +30,7 @@ public struct ExcludedFile: Codable, Sendable, Hashable {
 /// (An earlier rule dropped any file ending in `Test.swift` / `Tests.swift` and any directory ending in `Tests` was dropped
 /// without a word.)
 ///
-/// `exclude` patterns from `xcmutate.config.json` are applied afterwards, in order; the last match wins.
+/// `exclude` patterns from the config file are applied afterwards, in order; the last match wins.
 /// A pattern starting with `!` includes the file again, even if a default rule excluded it.
 public enum FileSelector {
     public struct Selection: Sendable {

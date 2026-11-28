@@ -23,7 +23,7 @@ xcmutate builds and tests the project you point it at. The rest of this page say
 
 ### `--prepare` runs a shell command
 
-The string given to `--prepare` is run with `/bin/sh -c` in the work copy. It can only be given on the command line: `xcmutate.config.json` cannot set it, so a file in the repository cannot make the tool run a command. This will not change. What the command reads is up to you: `--prepare 'xcodegen generate'` reads `project.yml` from the checkout.
+The string given to `--prepare` is run with `/bin/sh -c` in the work copy. It can only be given on the command line: the config file (`xcmutate.yml`, or `xcmutate.config.json` of earlier versions) cannot set it, so a file in the repository cannot make the tool run a command. This will not change. What the command reads is up to you: `--prepare 'xcodegen generate'` reads `project.yml` from the checkout.
 
 ### What is copied, and where
 

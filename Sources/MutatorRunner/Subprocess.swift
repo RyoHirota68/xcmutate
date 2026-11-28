@@ -485,6 +485,26 @@ public enum InterruptState {
         return limitFlag
     }
 
+    nonisolated(unsafe) private static var gateReason: String?
+
+    /// `--stop-when-gate-decided`: why the gate's result is decided ("passes: …", "fails: …"); nil if it was not.
+    public static var gateDecision: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return gateReason
+    }
+
+    /// The gate's result can no longer change: the run is cut short as by the time limit. False if the run was being
+    /// interrupted already.
+    static func decideGate(_ reason: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !flag else { return false }
+        flag = true
+        gateReason = reason
+        return true
+    }
+
     /// `--time-limit`: the time is up. The run is cut short as by an interrupt (the child processes are stopped,
     /// the report of the results so far is written). False if the run was being interrupted already.
     static func reachTimeLimit() -> Bool {

@@ -48,6 +48,11 @@ public enum KillConfirmation: String, Codable, Sendable, CaseIterable {
     /// effect as well as show it: a run of all tests can pass where the suites that reach the mutant fail by
     /// themselves. Costs one run of all tests per detected mutant.
     case full
+    /// As `auto`, except that the run of the tests without mutants after a run that did not pass is replaced by
+    /// putting back a copy of the app's containers and the simulator's keychain taken right before the baseline
+    /// (`SimulatorRestore`). Where that cannot be done or checked, the tests are run as with `auto`. Not the final
+    /// baseline, and not the run of all tests that rechecks a survivor.
+    case restore
 }
 
 public struct MutantResult: Codable, Sendable {
@@ -77,6 +82,8 @@ public struct MutantResult: Codable, Sendable {
     ///   the mutant failed, in a process of their own or in a shared process. A run of all tests gives the same
     ///   verdict unless another test leaves state that hides the mutant's effect from them.
     public var narrowedOnly: Bool?
+    /// True when the verdict comes from a run of all selected tests that was stopped at its first failing test.
+    public var stoppedAtFirstFailure: Bool?
     /// `--reuse`: true if the mutant was not run; the Killed of an earlier run was taken over because neither the
     /// product code nor a test that killed it changed. `killedBy` then names those tests.
     public var reused: Bool?
@@ -119,6 +126,106 @@ public struct RunDurations: Codable, Sendable {
     public var workers: Int?
     /// `--shared-process`: number of processes, their total time, and how the mutants were settled.
     public var sharedProcess: SharedProcessStatistics?
+    /// Where the time of the mutant phase and the final baseline went; nil when no mutant was run.
+    public var breakdown: Breakdown?
+
+    /// The parts of the mutant phase that are as long as runs of the tests, and what is left. The parts never add up to
+    /// more than `totalSeconds` (the wall-clock time of the mutant phase and the final baseline): with several workers,
+    /// a part of the mutant phase is its time summed over the workers divided by their number (`workers`).
+    public struct Breakdown: Codable, Sendable, Equatable {
+        /// The two runs without mutants at the start of shared processes (the processes that made them).
+        public var startupRunSeconds: Double
+        public var startupRunProcesses: Int
+        /// Mutants run by themselves against all selected tests, other than rechecks: by reason, `launch` (a shared
+        /// process found the switch evaluated before the tests started), `uneven` (evaluated unequally often in two runs),
+        /// `unnarrowed` (the tests that reach it are not known for certain), `selection` (no narrowing asked for).
+        public var wholeSelectionSeconds: Double
+        public var wholeSelectionMutants: Int
+        public var wholeSelectionReasons: [String: Int]
+        /// Of those, the ones whose run was stopped at its first failing test (Killed).
+        public var wholeSelectionStopped: Int = 0
+        /// Mutants run by themselves against their own narrowed tests (after a crash or a hang of a shared process,
+        /// for a confirmation, or without shared processes).
+        public var ownTestsSeconds: Double
+        public var ownTestsMutants: Int
+        /// Mutants run against all selected tests because they passed their narrowed tests, or for `--confirm-kills full`.
+        public var recheckSeconds: Double
+        public var recheckMutants: Int
+        /// Runs without mutants between mutants (`durations.confirmation.controlSeconds`).
+        public var controlSeconds: Double
+        public var finalBaselineSeconds: Double
+        /// Shared processes that were lost to a crash or a hang.
+        public var lostProcesses: Int
+        /// The rest of the mutant phase and the final baseline: mutants inside shared processes, starting processes.
+        public var otherSeconds: Double
+        public var totalSeconds: Double
+        /// Set when several workers ran side by side: the parts of that time are their time summed over the workers,
+        /// divided by the time the workers were there for and multiplied by the time they ran side by side (with no
+        /// worker dropped: divided by their number). What ran after them, alone, and the final baseline are not divided.
+        public var workers: Int?
+
+        private var phaseParts: [Double] { [startupRunSeconds, wholeSelectionSeconds, ownTestsSeconds, recheckSeconds, controlSeconds] }
+
+        /// The breakdown from parts measured as times summed over the workers (`otherSeconds` and `totalSeconds` of
+        /// `parts` are not read). `parallel`: the parts as they stood when the workers were done, how long they ran
+        /// side by side and the time the workers were there for (workers × that time, less for workers that were
+        /// dropped). Those parts become shares of the wall-clock time; the rest of each part is serial and is taken as
+        /// measured. Either is scaled down further if it still adds up to more than its time, so that the parts never
+        /// add up to more than `totalSeconds`; `otherSeconds` is what is left.
+        public static func fitted(_ parts: Breakdown, phaseSeconds: Double, parallel: (parts: Breakdown, seconds: Double, workerSeconds: Double, workers: Int)? = nil) -> Breakdown {
+            let phase = max(phaseSeconds, 0)
+            let all = parts.phaseParts
+            let side = parallel.map { $0.parts.phaseParts } ?? all
+            let serial = zip(all, side).map { max($0 - $1, 0) }
+            let sideWall = min(parallel.map { max($0.seconds, 0) } ?? phase, phase)
+            var sideFactor = parallel.map { $0.workerSeconds > 0 ? sideWall / $0.workerSeconds : 0 } ?? 1
+            let sideSum = side.reduce(0, +)
+            if sideSum * sideFactor > sideWall, sideSum > 0 { sideFactor = sideWall / sideSum }
+            let serialWall = max(phase - sideWall, 0)
+            var serialFactor = 1.0
+            let serialSum = serial.reduce(0, +)
+            if serialSum > serialWall, serialSum > 0 { serialFactor = serialWall / serialSum }
+            let values = zip(side, serial).map { $0 * sideFactor + $1 * serialFactor }
+            var result = parts
+            result.startupRunSeconds = values[0]
+            result.wholeSelectionSeconds = values[1]
+            result.ownTestsSeconds = values[2]
+            result.recheckSeconds = values[3]
+            result.controlSeconds = values[4]
+            result.workers = (parallel?.workers ?? 1) > 1 ? parallel?.workers : nil
+            result.totalSeconds = phase + parts.finalBaselineSeconds
+            result.otherSeconds = max(result.totalSeconds - values.reduce(0, +) - parts.finalBaselineSeconds, 0)
+            return result
+        }
+
+        /// The breakdown in one line, the largest parts first; parts of no time are left out.
+        public var line: String {
+            func time(_ seconds: Double) -> String {
+                let total = Int(seconds.rounded())
+                if total >= 3600 { return "\(total / 3600)h\(String(format: "%02d", (total % 3600) / 60))m" }
+                if total >= 60 { return "\(total / 60)m\(String(format: "%02d", total % 60))s" }
+                return "\(total)s"
+            }
+            // (Without narrowing, every mutant runs all tests: no reason to give)
+            let reasons = wholeSelectionReasons.filter { $0.key != "selection" }.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map { key, count -> String in
+                let words = ["launch": "evaluated before the tests", "uneven": "evaluated unequally often", "unnarrowed": "tests not known", "selection": "no narrowing"][key] ?? key
+                return "\(count) \(words)"
+            }
+            var parts: [(Double, String)] = [
+                (startupRunSeconds, "runs without mutants at the start of shared processes \(time(startupRunSeconds)) (\(startupRunProcesses))"),
+                (wholeSelectionSeconds, "mutants run alone against all tests \(time(wholeSelectionSeconds)) (\(wholeSelectionMutants)\(reasons.isEmpty ? "" : ": " + reasons.joined(separator: ", "))\(wholeSelectionStopped > 0 ? "; \(wholeSelectionStopped) stopped at the first failing test" : ""))"),
+                (ownTestsSeconds, "mutants run alone against their own tests \(time(ownTestsSeconds)) (\(ownTestsMutants)\(lostProcesses > 0 ? "; \(lostProcesses) shared process\(lostProcesses == 1 ? "" : "es") lost to crashes or hangs" : ""))"),
+                (recheckSeconds, "rechecks against all tests \(time(recheckSeconds)) (\(recheckMutants))"),
+                (controlSeconds, "runs without mutants between mutants \(time(controlSeconds))"),
+                (finalBaselineSeconds, "final baseline \(time(finalBaselineSeconds))"),
+            ].filter { $0.0 >= 0.5 }
+            parts.sort { $0.0 > $1.0 }
+            if otherSeconds >= 0.5 { parts.append((otherSeconds, "the rest \(time(otherSeconds)) (mutants in shared processes, starting processes)")) }
+            let perWorker = workers.map { " (\($0) workers side by side: their time is divided among them)" } ?? ""
+            return "time of the mutant phase and the final baseline \(time(totalSeconds))\(perWorker): " + parts.map(\.1).joined(separator: "; ")
+        }
+    }
+
     /// `--shared-process auto`: whether shared processes were used, and the numbers the choice rests on.
     public var sharedProcessChoice: SharedProcessChoice?
 
@@ -144,6 +251,10 @@ public struct RunDurations: Codable, Sendable {
         /// selection, and how many of them passed there (reported as Survived).
         public var detectionsRunAgainstAll: Int?
         public var detectionsNotConfirmedByAll: Int?
+        /// `--confirm-kills restore`: runs without mutants that putting back the snapshot replaced, and the times it
+        /// could not and the tests were run instead (the reasons are in the warning `restoreFellBack`).
+        public var restoredStates: Int?
+        public var restoreFallbacks: Int?
     }
 
     /// The choice of `--shared-process auto` (`SharedProcessChoice.decide`).
@@ -213,6 +324,35 @@ public struct RunReport: Codable, Sendable {
     public var interrupted = false
     /// true when it was `--time-limit` that cut the run short (then `interrupted` is true as well). Absent otherwise.
     public var timeLimitReached: Bool?
+    /// true when `--stop-when-gate-decided` cut the run short because the gates' result could no longer change
+    /// (then `interrupted` is true as well, and `pendingKeys` lists what was not run). Absent otherwise.
+    public var gateDecidedEarly: Bool?
+    /// With `gateDecidedEarly`: how the result was decided ("fails: …" or "passes: …").
+    public var gateDecision: String?
+    /// The run options that came from the config file: the file, the profile, each key with its value and where it came
+    /// from (`config` for its `run` object, `profile <name>`), and the keys that the command line replaced. Absent
+    /// when the file gave no run option.
+    public var settings: Settings?
+    public struct Settings: Codable, Sendable, Equatable {
+        public var file: String?
+        public var profile: String?
+        public var fromFile: [String: Setting]
+        public var overriddenByCommandLine: [String]
+        public struct Setting: Codable, Sendable, Equatable {
+            public var value: String
+            public var source: String
+            public init(value: String, source: String) {
+                self.value = value
+                self.source = source
+            }
+        }
+        public init(file: String?, profile: String?, fromFile: [String: Setting], overriddenByCommandLine: [String]) {
+            self.file = file
+            self.profile = profile
+            self.fromFile = fromFile
+            self.overriddenByCommandLine = overriddenByCommandLine
+        }
+    }
     /// `--max-mutants`: present when fewer mutants were examined than the selection holds.
     public var sampling: Sampling?
     /// Stable keys of the mutants not run because of the interrupt or the time limit.
@@ -317,6 +457,16 @@ public struct RunReport: Codable, Sendable {
         public var matches: [TestSelector.Match]
         /// `auto`: the mutated files for which no test file was found (their mutants ran against the tests found for the other files).
         public var unmatchedFiles: [String]?
+        /// `impact`: the map's commit, the files changed since, how many suites were chosen (nil: the whole selection
+        /// ran), suites that the map did not know, and why the whole selection ran.
+        public var impact: Impact?
+        public struct Impact: Codable, Sendable {
+            public var commit: String
+            public var changedFiles: [String]
+            public var suites: Int?
+            public var newSuites: [String]?
+            public var fallbackReasons: [String]?
+        }
     }
 
     public struct Acceptance: Codable, Sendable {

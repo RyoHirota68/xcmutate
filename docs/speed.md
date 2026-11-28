@@ -161,6 +161,24 @@ What the rule gives for the projects on this page:
 
 The rule does not see crashes and hangs in advance, or the share of mutants that survive. It errs towards one process per mutant only for small numbers of mutants, where the difference is a minute or two. Whether `auto` becomes the default is left open until it has been compared on more projects.
 
+### Where the time of your run went
+
+The run ends with one line that splits the mutant phase and the final baseline into the parts above (also in the text report, and as `durations.breakdown` in the JSON report; [reports.md](reports.md#the-json-report)):
+
+```
+time of the mutant phase and the final baseline 3h32m: mutants run alone against all tests 1h58m (7: 4 evaluated before the tests, 3 evaluated unequally often); runs without mutants at the start of shared processes 31m00s (1); …
+```
+
+What helps depends on the largest part. Mutants run alone against all tests are code that runs at launch or once per process; each costs a run of the whole selection when it survives, and until its first failing test when it is detected (with `--shared-process`, unless the tests run in random order; the line says how many were stopped there). A smaller selection (`--only-testing`, one test-plan configuration) shortens both. The runs at the start of shared processes are a run of the whole selection and one of the mutants' suites. Runs of mutants against their own tests after a crash or a hang are as long as those tests.
+
+### When every run of all tests is long
+
+With tests that take many minutes, a run is the sum of its runs of all tests more than of anything per mutant: the baseline, the first run at the start of a shared process, the mutants run alone against all tests, the rechecks of survivors and the final baseline. Three options attack those steps; none is on by default.
+
+- `--select-tests impact` ([usage.md](usage.md#choosing-the-tests-from-an-earlier-run---select-tests-impact)) makes "all tests" the suites that ran the changed files in an earlier run, so every one of those steps becomes a run of those suites. With 15 minutes for all tests and about 45 tests for the changed file, each such run becomes about a minute (an estimate, not measured on that app). What it gives up: the results hold among the chosen suites.
+- `--stop-when-gate-decided` ([reports.md](reports.md#gates-and-exit-codes)) ends a CI run when its gate's result is known. A failing pull request stops at its first gap. Nothing is given up in the verdicts; the mutants after that point are not run.
+- `--confirm-kills restore` ([usage.md](usage.md#failures-caused-by-state-left-behind)) replaces the run without mutants after a run that did not pass by putting the simulator back, which takes seconds. On one file of the fixture it replaced 23 of 27 such runs. It assumes tests that depend on nothing outside the simulator. The simulator's pasteboard follows the Mac's, so copying something on the Mac during a run can make the tool run the tests instead of putting the simulator back (`restoreFellBack`); the verdicts do not change.
+
 ### A large production app
 
 The same eight files of the app were run five times with `--select-tests reach --shared-process`. They have about 200 mutants, about 180 of which the tests reach, and about 1,200 tests in the selection. The times are for the mutant phase; "per mutant" divides by the reached mutants.
@@ -178,6 +196,16 @@ Every mutant was detected, or not, exactly as in the first run, in all four late
 - More than a third is the recheck of survivors. In the second and third runs, about 30 mutants passed their narrowed tests, and each was run against all selected tests (about 47.5 s per run). None of those runs detected anything. With `--no-recheck-survivors` the second run would take about 2,900 s, or 16 s per mutant (computed from the run, not measured), and its survivors would be marked as not run against all tests.
 - Starting the test host is no longer where the time is. In the first run the tool could not start this app's host itself; from the second run on it could, and a recheck went from 54 s to 47.6 s. The tests take about 44 s of that.
 - Mutants that crash the test process or never end are a large part of these files, and each costs a process and a wait. In the fourth run a mutant that crashes the app cost 17 to 20 s (up to 149 s before), and a mutant whose test never ends was stopped twice after 46 s each (220 s before).
+
+Measured again with 0.15.0, on 33 mutants of the app, one run of each setting at a time when the Mac had little else to do (whole runs, build and baselines included):
+
+| Version | Options | Whole run |
+|---|---|---:|
+| 0.13.0 | `--select-tests reach --shared-process` | 1,162 s |
+| 0.15.0 | `--select-tests reach --shared-process` | 1,147 s |
+| 0.15.0 | `--select-tests reach --shared-process --confirm-kills restore` | 984 s |
+
+With `--confirm-kills restore`, 9 of the 12 runs without mutants after a detection were replaced by putting the simulator back; the other 3 were run as with `auto`. The four runs of this comparison gave the same verdicts: 28 Killed and 5 Crash.
 
 For comparison, the conditions under which the same app was fast: on two files whose mutants are reached by about 25 tests, an earlier development version took 7.8 s per mutant with one process per mutant and 2.1 s with `--shared-process`. The difference to 22 s is not the tool's version. It is the selection (every run of "the tests" is about fifty times longer), the survivors (each one a run of all selected tests), and the share of mutants that crash or hang.
 
@@ -301,7 +329,7 @@ A mutant in a `static let` initializer, in a lazily built cache, or in app start
 
 ### Code that exists for the tests
 
-Helpers that only the tests call (`resetForTesting()`) produce mutants that cost time and say nothing. `excludeDeclarations` in `xcmutate.config.json` leaves them out by name ([configuration.md](configuration.md#xcmutateconfigjson)).
+Helpers that only the tests call (`resetForTesting()`) produce mutants that cost time and say nothing. `excludeDeclarations` in `xcmutate.yml` leaves them out by name ([configuration.md](configuration.md#xcmutateconfigjson)).
 
 ## What does not help
 

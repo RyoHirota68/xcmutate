@@ -187,6 +187,9 @@ It fetches public packages at fixed commits into `.build/campaign` (nothing of t
 | The order of runs, the runs without mutants, timeouts (anything whose cost grows with the length of the tests) | Also `scripts/measure-load.sh` before and after, with and without `--shared-process`, and `scripts/compare-reports.py` on each pair |
 | `--reuse` | `scripts/verify-reuse.sh <SIMULATOR-UDID>` |
 | Interrupting, `--time-limit`, `--resume`, `--max-mutants` | `scripts/verify-time-limit.sh` |
+| `--select-tests impact`, `--write-impact-map` | `scripts/verify-impact.sh` |
+| `init`, run options in the config file | `scripts/verify-init.sh`, and `init` on the fixture app with a simulator of your own |
+| `--confirm-kills restore` | The full fixture check with `--confirm-kills restore` on a simulator of your own |
 | `action.yml`, `action/`, `examples/` | `scripts/verify-action.sh`; say in the pull request that the change was not run on GitHub, or where it was |
 | `scripts/make-release.sh`, `packaging/`, `.github/workflows/release.yml`, `Package.swift` | `scripts/make-release.sh` |
 | `Fixtures/SampleApp` | `swift test` and the full fixture check |

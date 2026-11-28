@@ -47,11 +47,60 @@ public enum SimulatorCheck {
         guard let name = fields["name"], let platform = fields["platform"], platform.hasSuffix("Simulator") else { return nil }
         var matches = candidates.filter { $0.device.name == name }
         if let os = fields["OS"], os != "latest" {
-            // Runtime identifiers look like `com.apple.CoreSimulator.SimRuntime.iOS-18-0`.
-            let suffix = "-" + os.replacingOccurrences(of: ".", with: "-")
-            matches = matches.filter { $0.runtime.hasSuffix(suffix) }
+            matches = matches.filter { runtimeVersion($0.runtime) == os }
         }
         return matches.count == 1 ? matches[0].device : nil
+    }
+
+    /// The simulators that a destination by name (`platform=… Simulator,name=…[,OS=…]`) matches; nil when it is not
+    /// such a destination. More than one, or none, means that the destination does not name one simulator here.
+    public static func candidates(forDestination destination: String, simctlJSON: Data) -> [Device]? {
+        let fields = fields(ofDestination: destination)
+        guard fields["id"] == nil, let name = fields["name"], let platform = fields["platform"], platform.hasSuffix("Simulator"),
+              let root = try? JSONSerialization.jsonObject(with: simctlJSON) as? [String: Any],
+              let runtimes = root["devices"] as? [String: [[String: Any]]] else { return nil }
+        var result: [Device] = []
+        for (runtime, devices) in runtimes {
+            if let os = fields["OS"], os != "latest", runtimeVersion(runtime) != os { continue }
+            for entry in devices where entry["name"] as? String == name && (entry["isAvailable"] as? Bool) != false {
+                if let udid = entry["udid"] as? String { result.append(Device(udid: udid, name: name, state: entry["state"] as? String ?? "")) }
+            }
+        }
+        return result.sorted { $0.udid < $1.udid }
+    }
+
+    /// Why `--workers` cannot create simulators like the one of a destination by name, or nil when it names one.
+    public static func workersRefusal(forDestination destination: String, simctlJSON: Data) -> String? {
+        guard let found = candidates(forDestination: destination, simctlJSON: simctlJSON), found.count != 1 else { return nil }
+        if found.isEmpty {
+            return "--workers: the destination \(destination) names no simulator on this Mac (`xcrun simctl list devices` lists them); give one that exists, by its name and OS or as id=<UDID>"
+        }
+        return "--workers: the destination \(destination) names \(found.count) simulators on this Mac (\(found.map { "\($0.udid) \($0.state)" }.joined(separator: ", "))), so it is not known which one to create workers like; give one of them as id=<UDID>, or add OS=<version>"
+    }
+
+    /// The OS version of a runtime identifier: `com.apple.CoreSimulator.SimRuntime.iOS-18-0` → `18.0`. Some runtimes
+    /// carry more after the version (`…SimRuntime.iOS-27-2-iPhone19-4`); the version is the numbers after the platform.
+    static func runtimeVersion(_ runtime: String) -> String? {
+        guard let last = runtime.split(separator: ".").last else { return nil }
+        let numbers = last.split(separator: "-").dropFirst().prefix { $0.allSatisfy(\.isNumber) }
+        return numbers.isEmpty ? nil : numbers.joined(separator: ".")
+    }
+
+    /// A destination that names the simulator `udid` by its name and OS version (`platform=iOS Simulator,name=iPhone
+    /// 16,OS=18.0`), which works on another Mac with a simulator of that name, unlike its UDID; nil when that would
+    /// not name this one simulator (another simulator has the same name and version, or the runtime is not known).
+    public static func destinationByName(udid: String, simctlJSON: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: simctlJSON) as? [String: Any],
+              let runtimes = root["devices"] as? [String: [[String: Any]]] else { return nil }
+        for (runtime, devices) in runtimes {
+            guard let entry = devices.first(where: { ($0["udid"] as? String)?.caseInsensitiveCompare(udid) == .orderedSame }),
+                  let name = entry["name"] as? String, !name.contains(","), let version = runtimeVersion(runtime),
+                  let platform = runtime.split(separator: ".").last?.split(separator: "-").first else { continue }
+            let os = platform == "xrOS" ? "visionOS" : String(platform)
+            let destination = "platform=\(os) Simulator,name=\(name),OS=\(version)"
+            return device(forDestination: destination, simctlJSON: simctlJSON)?.udid.caseInsensitiveCompare(udid) == .orderedSame ? destination : nil
+        }
+        return nil
     }
 
     /// The warning for a simulator that is not booted; `nil` when it is booted.

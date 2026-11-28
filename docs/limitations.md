@@ -29,6 +29,12 @@ Distribution and CI:
 
 - Parts of the GitHub Action. It ran on GitHub with a Swift package and with an iOS app on a simulator, from the release binary and from the sources, on a pull request and with a failing gate. Not tried on GitHub: `baseline-report`, `package-cache`, `select-tests` and `shared-process` on a simulator, and the example workflows as they are written ([ci.md](ci.md#what-has-been-verified)).
 
+Options of 0.15.0:
+
+- `--confirm-kills restore` was checked on the fixture app on an iOS 27.2 simulator (464 of 464 expectations; 14 runs without mutants replaced, none fell back) and on one file of it with one process per mutant. It has not been tried on a large app, or with tests that use the keychain, App Groups or notifications heavily.
+- `--select-tests impact` was checked on a small Swift package on macOS (`scripts/verify-impact.sh`). It has not been tried on an iOS app, or with a map of a large app.
+- `--stop-when-gate-decided` was checked on Swift packages on macOS and through the action's script, not on GitHub.
+
 Speed:
 
 - The speed of `--workers` was last measured with an earlier development version. Its verdicts were checked with this version ([speed.md](speed.md)).

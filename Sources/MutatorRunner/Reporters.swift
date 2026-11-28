@@ -9,7 +9,7 @@ public struct JSONReport: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case version, keyVersion, tool, startedAt, finishedAt, commit, scope, score, reachedScore, unevaluatedCount, counts, fileScores, root, files, skippedFiles,
-             excluded, baseline, durations, testSelection, acceptance, interrupted, timeLimitReached, sampling, pendingKeys, resumedCount, reuse,
+             excluded, baseline, durations, testSelection, acceptance, interrupted, timeLimitReached, gateDecidedEarly, gateDecision, settings, sampling, pendingKeys, resumedCount, reuse,
              results, ignored, ignoredByReason, warnings
     }
 
@@ -31,6 +31,9 @@ public struct JSONReport: Encodable {
         try c.encode(report.excluded, forKey: .excluded)
         try c.encode(report.interrupted, forKey: .interrupted)
         try c.encodeIfPresent(report.timeLimitReached, forKey: .timeLimitReached)
+        try c.encodeIfPresent(report.gateDecidedEarly, forKey: .gateDecidedEarly)
+        try c.encodeIfPresent(report.gateDecision, forKey: .gateDecision)
+        try c.encodeIfPresent(report.settings, forKey: .settings)
         try c.encodeIfPresent(report.sampling, forKey: .sampling)
         try c.encode(report.pendingKeys, forKey: .pendingKeys)
         try c.encode(report.resumedCount, forKey: .resumedCount)
@@ -253,7 +256,7 @@ public enum TextReport {
         var out: [String] = []
         let counts = report.counts
         let order = ["Killed", "Crash", "Timeout", "Survived", "NotReached", "Accepted", "CompileError", "NotActivated", "RunnerError", "Ignored"]
-        out.append("\(ToolInfo.name) \(report.tool.version): \(report.results.count) mutant\(report.results.count == 1 ? "" : "s") (scope: \(report.scope))" + (report.interrupted ? " — \(report.timeLimitReached == true ? "TIME LIMIT REACHED" : "INTERRUPTED"), \(report.pendingKeys.count) not run" : ""))
+        out.append("\(ToolInfo.name) \(report.tool.version): \(report.results.count) mutant\(report.results.count == 1 ? "" : "s") (scope: \(report.scope))" + (report.interrupted ? " — \(report.gateDecidedEarly == true ? "GATE DECIDED" : report.timeLimitReached == true ? "TIME LIMIT REACHED" : "INTERRUPTED"), \(report.pendingKeys.count) not run" : ""))
         if let sampling = report.sampling {
             out.append("  sample: \(sampling.limit) of \(sampling.candidates) mutants, chosen by their stable keys (--max-mutants); the others were not examined")
         }
@@ -274,6 +277,9 @@ public enum TextReport {
         out.append(timing)
         // One line per thing (they were all on the line of the times)
         if let choice = d.sharedProcessChoice { out.append("  --shared-process auto: \(choice.reason)") }
+        if let breakdown = d.breakdown { out.append("  " + breakdown.line) }
+        let stopped = report.results.filter { $0.stoppedAtFirstFailure == true }.count
+        if stopped > 0 { out.append("  stopped at the first failing test: \(stopped) Killed from runs of all selected tests that did not go on after that test") }
         if let shared = d.sharedProcess {
             var line = "  shared processes: \(shared.processes); \(shared.killed) mutant\(shared.killed == 1 ? "" : "s") killed there, \(shared.passed) passed there\(shared.trustedSurvivors ? " (not confirmed alone)" : ""), \(shared.alone) run\(shared.alone == 1 ? "" : "s") alone"
             if let confirmed = shared.confirmedDirectly, confirmed > 0 { line += ", \(confirmed) survivors confirmed in a new process started by the tool" }
@@ -462,7 +468,7 @@ public enum GitHubReport {
                 : "No undetected mutants: \(detected) of \(report.results.count) mutants were detected" + (detected < report.results.count ? "; the others have no verdict or were accepted (see the text or JSON report)." : ".")))
         }
         if report.interrupted {
-            lines.append("::notice title=\(property(ToolInfo.name))::" + data("\(report.timeLimitReached == true ? "The time limit was reached" : "The run was interrupted"): \(report.pendingKeys.count) mutants were not run."))
+            lines.append("::notice title=\(property(ToolInfo.name))::" + data("\(report.gateDecidedEarly == true ? "The gate's result was decided (\(report.gateDecision ?? ""))" : report.timeLimitReached == true ? "The time limit was reached" : "The run was interrupted"): \(report.pendingKeys.count) mutants were not run."))
         }
         return lines.joined(separator: "\n")
     }
@@ -488,7 +494,7 @@ public enum MarkdownReport {
         out.append("## Mutation testing (\(ToolInfo.name) \(report.tool.version))")
         out.append("")
         if report.interrupted {
-            out.append("> **\(report.timeLimitReached == true ? "Time limit reached" : "Interrupted")**: \(report.pendingKeys.count) mutants were not run. The numbers below cover only the mutants that finished.")
+            out.append("> **\(report.gateDecidedEarly == true ? "Gate decided" : report.timeLimitReached == true ? "Time limit reached" : "Interrupted")**: \(report.pendingKeys.count) mutants were not run\(report.gateDecidedEarly == true ? " because the gate's result could no longer change (\(report.gateDecision ?? ""))" : ""). The numbers below cover only the mutants that finished.")
             out.append("")
         }
         if let sampling = report.sampling {
@@ -772,6 +778,37 @@ public struct Gate: Sendable {
     public struct Failure: Sendable, Equatable {
         public var exitCode: Int32
         public var message: String
+    }
+
+    /// Whether the gates' result is decided whatever the mutants without a result turn out to be (`--stop-when-gate-decided`):
+    /// "fails: …" as soon as one gate fails in every case, "passes: …" when every requested gate passes in every case
+    /// (only `--fail-under` can be decided so; `--fail-on-survived` and `--baseline-report` can fail with any mutant
+    /// still to come). nil while it is open.
+    ///
+    /// - Parameters:
+    ///   - results: the results so far (an undetected mutant whose key is accepted does not count).
+    ///   - pending: mutants that will still get a result.
+    public func decided(results: [MutantResult], pending: Int, accepted: Set<String>) -> String? {
+        let undetected = results.filter { $0.status.isUndetected && !accepted.contains($0.mutant.key) }
+        if failOnSurvived, let first = undetected.first {
+            return "fails: --fail-on-survived, \(first.mutant.file):\(first.mutant.start.line) \(first.mutant.operator.rawValue) is \(first.status.rawValue)"
+        }
+        if let earlier = earlierUndetected,
+           let new = undetected.first(where: { !earlier.contains($0.mutant.key) && (earlierFiles?.contains($0.mutant.file) ?? true) }) {
+            return "fails: --baseline-report, \(new.mutant.file):\(new.mutant.start.line) \(new.mutant.operator.rawValue) is \(new.status.rawValue) and was not undetected in the earlier report"
+        }
+        guard let failUnder else { return nil }
+        let detected = Double(results.filter { $0.status.isDetected }.count)
+        let missed = Double(undetected.count)
+        let open = Double(pending)
+        guard detected + missed + open > 0 else { return nil }
+        let best = (detected + open) / (detected + missed + open) * 100
+        let worst = detected / (detected + missed + open) * 100
+        if best < failUnder { return String(format: "fails: --fail-under, the score cannot reach %.1f%% (at most %.1f%% with %d mutants still to come)", failUnder, best, pending) }
+        if worst >= failUnder, !failOnSurvived, earlierUndetected == nil {
+            return String(format: "passes: --fail-under, the score stays at %.1f%% or more (at least %.1f%% with %d mutants still to come)", failUnder, worst, pending)
+        }
+        return nil
     }
 
     /// The failed gates (in ascending order of exit code). Empty means passed.

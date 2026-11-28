@@ -128,6 +128,11 @@ result=$?
 CHECK="result.sh fails the job with that code and says why"
 check bash -c "[ $result -eq 3 ] && grep -q '::error::xcmutate: mutants were not detected' '$OUT/result.out'"
 
+echo "== run.sh: the same gate, stopped as soon as its result is decided"
+run_action decided INPUT_FAIL_ON_SURVIVED=true INPUT_STOP_WHEN_GATE_DECIDED=true INPUT_SINCE=none INPUT_FILES="Sources/Sample/Age.swift"
+CHECK="the gate's exit code (3); the report says that the gate's result was decided and lists what was not run"
+check bash -c "[ '$(output exit-code)' = 3 ] && /usr/bin/python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r[\"gateDecidedEarly\"] and r[\"gateDecision\"].startswith(\"fails: --fail-on-survived\") and any(w[\"kind\"] == \"gateDecided\" for w in r[\"warnings\"]) else 1)' '$OUT/reports-decided/mutation.json'"
+
 echo "== run.sh: the whole file (since: none), no gate, further arguments, a limit on the number of mutants"
 run_action full INPUT_SINCE=none INPUT_FILES="Sources/Sample/Old Age.swift
 Sources/Sample/A*.swift" INPUT_MAX_MUTANTS=1 INPUT_ANNOTATIONS=false INPUT_ARGS="--disable-operator

@@ -23,6 +23,11 @@ public struct RunConfiguration: Sendable {
     public var generatorOptions: GeneratorOptions
     /// `--select-tests auto`: finds the tests corresponding to the target files and passes them to `-only-testing`.
     public var selectTestsAutomatically: Bool = false
+    /// `--select-tests impact --impact-map <file>`: the tests are the suites that the map says ran the files changed
+    /// since its commit, and the suites of changed test files (`ImpactMap`); reach narrowing applies within them.
+    public var impactMap: URL?
+    /// `--write-impact-map <file>`: write the map of this run's baseline (needs `--select-tests reach`).
+    public var writeImpactMap: URL?
     /// `--select-tests reach`: records per-test reach in the baseline and, for each mutant, runs only the suites of
     /// the tests that reached it.
     public var selectTestsByReach: Bool = false
@@ -54,6 +59,14 @@ public struct RunConfiguration: Sendable {
     /// False (`--no-narrow-gate`): both runs without mutants at the start of a shared process run the whole selection.
     /// True: with narrowed tests, the second runs only the suites of the process's mutants.
     public var narrowGate = true
+    /// With shared processes: a mutant run by itself against all selected tests runs in a process with the tool's
+    /// driver and stops at its first failing test (`--no-stop-at-first-failure`: false, every such run goes to the end
+    /// under `xcodebuild`).
+    public var stopAtFirstFailure = true
+    /// `--stop-when-gate-decided`: the requested gates; the run stops when their result can no longer change.
+    public var stopWhenGateDecided: Gate?
+    /// The run options that came from the config file (for the report).
+    public var settings: RunReport.Settings?
     /// `--trust-shared-survivors`: do not run again, alone, the mutants whose tests passed in a shared process.
     public var trustSharedSurvivors = false
     /// `--workers`: number of test destinations that run mutants at the same time.
@@ -229,6 +242,15 @@ public final class RunSession {
             throw RunError.stage("work-dir", busy.description, log: nil)
         }
         defer { workLock.release() }
+        // xcodebuild leaves lock files for this DerivedData directory in the temporary directory (removed while the
+        // work directory is still locked, so that no other run is building there)
+        defer { PackageLockFiles.remove(derivedData: derivedData) }
+        // --workers with a simulator by name that is not one simulator here: not a Mac, where the workers would share
+        // the destination, but a destination to name better (checked before the build, not after the baseline)
+        if config.workers > 1 + config.additionalDestinations.count, let json = SimulatorWorkers.listJSON(),
+           let refusal = SimulatorCheck.workersRefusal(forDestination: config.xcode.destination, simctlJSON: json) {
+            throw RunError.stage("workers", refusal, log: nil)
+        }
         WorkDirectoryInfo.write(to: config.workDirectory, root: config.root)
         // The logs of the run before this one are kept, one generation of them, in `logs-previous`: a log that is
         // looked for only after the next run has started was gone before (the one run in which a crashing mutant
@@ -323,7 +345,10 @@ public final class RunSession {
         defer { timeLimit?.cancel() }
         /// The warning of a run that was cut short: by the time limit, or by a signal.
         func cutShort(_ what: String) -> RunWarning {
-            InterruptState.timeLimitReached
+            if let decision = InterruptState.gateDecision {
+                return RunWarning(kind: "gateDecided", message: "The gate's result was decided before every mutant had run (\(decision); --stop-when-gate-decided)\(what)")
+            }
+            return InterruptState.timeLimitReached
                 ? RunWarning(kind: "timeLimit", message: "The time limit (--time-limit \(config.timeLimitText ?? "")) was reached\(what)")
                 : RunWarning(kind: "interrupted", message: "The run was interrupted\(what)")
         }
@@ -355,10 +380,13 @@ public final class RunSession {
             report.commit = commit
             report.interrupted = interrupted
             report.timeLimitReached = interrupted && InterruptState.timeLimitReached ? true : nil
+            report.gateDecidedEarly = interrupted && InterruptState.gateDecision != nil ? true : nil
+            report.gateDecision = interrupted ? InterruptState.gateDecision : nil
             report.sampling = sampling
             report.pendingKeys = pending
             report.resumedCount = resumedCount
             report.reuse = reuseSummary
+            report.settings = config.settings
             report.excluded = config.excluded
             return report
         }
@@ -554,6 +582,22 @@ public final class RunSession {
             testSelection = RunReport.TestSelection(mode: "auto", fallback: ids == nil, onlyTesting: runXcode.options.onlyTesting,
                                                     skipTesting: config.xcode.skipTesting.isEmpty ? nil : config.xcode.skipTesting, matches: matches,
                                                     unmatchedFiles: unmatched.isEmpty ? nil : unmatched)
+        } else if let mapURL = config.impactMap {
+            let summary = impactSelection(map: mapURL, xctestrun: xctestrun)
+            if let suites = summary.suites {
+                runXcode.options.onlyTesting = suites
+                let message = "--select-tests impact: \(suites.count) suites chosen from the map of commit \(summary.commit.prefix(10)) for \(summary.changedFiles.count) changed files\(summary.newSuites.isEmpty ? "" : " (with suites the map does not know: \(summary.newSuites.joined(separator: ", ")))"). The results hold among these suites; a test outside them may still reach or detect a mutant (a full run is the reference)"
+                progress(message)
+                warnings.append(RunWarning(kind: "impactSelection", message: message))
+            } else {
+                let message = "--select-tests impact ran the whole selection: \(summary.reasons.prefix(5).joined(separator: "; "))\(summary.reasons.count > 5 ? "; … (\(summary.reasons.count) reasons)" : "")"
+                progress(message)
+                warnings.append(RunWarning(kind: "impactFallback", message: message))
+            }
+            testSelection = RunReport.TestSelection(mode: "impact", fallback: summary.suites == nil, onlyTesting: runXcode.options.onlyTesting,
+                                                    skipTesting: config.xcode.skipTesting.isEmpty ? nil : config.xcode.skipTesting, matches: [])
+            testSelection?.impact = .init(commit: summary.commit, changedFiles: summary.changedFiles, suites: summary.suites?.count,
+                                          newSuites: summary.newSuites.isEmpty ? nil : summary.newSuites, fallbackReasons: summary.reasons.isEmpty ? nil : summary.reasons)
         } else {
             let manual = !config.xcode.onlyTesting.isEmpty || !config.xcode.skipTesting.isEmpty
             testSelection = RunReport.TestSelection(mode: manual ? "manual" : "all", fallback: false, onlyTesting: config.xcode.onlyTesting,
@@ -567,6 +611,20 @@ public final class RunSession {
         }
 
         // 4. Baseline: all tests must pass with all mutants off. The reached switches are recorded at the same time
+        // --confirm-kills restore: the copy of the destination that later replaces the runs without mutants, taken
+        // with the app installed and right before the baseline (whose pass is what the restored state stands for)
+        var restore: SimulatorRestore?
+        if config.confirmKills == .restore {
+            switch prepareRestore(xctestrun: xctestrun, xcode: runXcode) {
+            case let .success(made):
+                restore = made
+                progress("--confirm-kills restore: a copy of the app's containers and the simulator's keychain was taken; it replaces the runs without mutants after runs that did not pass")
+            case let .failure(reason):
+                let message = "--confirm-kills restore cannot be used (\(reason.description)); the tests are run without mutants after runs that did not pass, as with auto"
+                progress(message)
+                warnings.append(RunWarning(kind: "restoreUnavailable", message: message))
+            }
+        }
         let baselineTrace = tracesDirectory.appendingPathComponent("baseline.trace")
         let baselineLog = logsDirectory.appendingPathComponent("baseline.log")
         RunProgress.begin("baseline", hint: { RunProgress.endedTests(inLog: baselineLog.path).map { "\($0) tests ended so far" } })
@@ -610,6 +668,21 @@ public final class RunSession {
             reached = reach.reached
             let made = ReachSelector(reach: reach, suites: TestSuiteInfo.load(baselineBundle) ?? [], totalTestCount: summary.totalTestCount)
             selector = made
+            if let mapURL = config.writeImpactMap {
+                if made.usable, let commit = Self.commit(of: config.root) {
+                    let map = ImpactMap.make(reach: reach, suites: made.suites, mutants: active, commit: commit.sha, dirty: commit.dirty)
+                    do {
+                        try FileManager.default.createDirectory(at: mapURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        try JSONEncoder.sortedPretty.encode(map).write(to: mapURL)
+                        progress("impact map written: \(mapURL.path) (\(map.files.count) files, \(map.suites.count) suites, commit \(commit.sha.prefix(10))\(commit.dirty ? ", with uncommitted changes" : ""))")
+                        if commit.dirty { warnings.append(RunWarning(kind: "impactMapDirty", message: "The impact map was written from a working tree with uncommitted changes; it is filed under commit \(commit.sha.prefix(10)), which does not hold them.")) }
+                    } catch {
+                        warnings.append(RunWarning(kind: "impactMapNotWritten", message: "The impact map could not be written to \(mapURL.path): \(error)"))
+                    }
+                } else {
+                    warnings.append(RunWarning(kind: "impactMapNotWritten", message: "The impact map was not written: \(made.usable ? "the commit of the repository is not known" : "the tests that reach each mutant could not be attributed reliably")."))
+                }
+            }
             if !made.usable {
                 warnings.append(RunWarning(kind: "reachSelectionUnavailable", message: "--select-tests reach: the tests that reach each mutant could not be attributed reliably (\(reach.reliable ? "the suites in the result bundle do not add up to the \(summary.totalTestCount) tests that ran" : "tests overlapped in the trace")); every mutant was run against the whole selection"))
             }
@@ -676,6 +749,12 @@ public final class RunSession {
                 progress("creating \(missing) worker simulator\(missing == 1 ? "" : "s") like \(udid)...")
                 createdSimulators = try SimulatorWorkers.create(count: missing, like: udid)
                 destinations += createdSimulators.map { "id=\($0.udid)" }
+                // A new simulator has decided nothing: a permission dialog there stops tests that pass on the first one
+                if let problem = SimulatorWorkers.copyPrivacy(from: udid, to: createdSimulators.map(\.udid), bundles: Xcode.hostBundleIdentifiers(xctestrun: xctestrun)) {
+                    let message = "The privacy settings of \(udid) for the app under test could not all be given to the worker simulators (\(problem)). A permission dialog there can stop shared processes and fail tests that pass on \(udid); a worker whose tests do not pass without mutants is not used."
+                    progress(message)
+                    warnings.append(RunWarning(kind: "workerPrivacy", message: message))
+                }
             } else {
                 // Not a simulator (macOS): the workers share the destination
                 destinations += Array(repeating: config.xcode.destination, count: missing)
@@ -779,7 +858,7 @@ public final class RunSession {
         let executor = MutantExecutor(
             inputs: .init(session: self, config: config, journal: journal, xctestrun: xctestrun, xcode: runXcode, evidence: evidence,
                           selector: selector, timeout: workerTimeout, timeouts: timeouts, baselineTimeout: config.baselineTimeout, shared: sharedSetup, switchCount: nextID,
-                          confirmation: config.confirmKills, sharedDestination: sharedDestination,
+                          confirmation: config.confirmKills, restore: restore, sharedDestination: sharedDestination,
                           recheckSurvivors: config.recheckSurvivors && selector != nil),
             workers: workers)
         let mutantPhaseStart = Date()
@@ -824,7 +903,7 @@ public final class RunSession {
         let unnarrowedCount = executor.unnarrowedCount
         interrupted = InterruptState.isInterrupted
         if selector != nil {
-            testSelection?.mode = "reach"
+            if testSelection?.mode != "impact" { testSelection?.mode = "reach" }
             testSelection?.narrowedMutants = narrowedCount
             testSelection?.unnarrowedMutants = unnarrowedCount
             progress("tests selected by reach for \(narrowedCount) mutants; \(unnarrowedCount) were run against the whole selection")
@@ -893,7 +972,17 @@ public final class RunSession {
                                        recheckedSurvivors: config.recheckSurvivors ? executor.recheckedSurvivors : nil,
                                        recheckedDetected: config.recheckSurvivors ? executor.recheckedDetected : nil,
                                        detectionsRunAgainstAll: config.confirmKills == .full ? executor.detectionsRunAgainstAll : nil,
-                                       detectionsNotConfirmedByAll: config.confirmKills == .full ? executor.detectionsNotConfirmedByAll : nil)
+                                       detectionsNotConfirmedByAll: config.confirmKills == .full ? executor.detectionsNotConfirmedByAll : nil,
+                                       restoredStates: restore != nil ? executor.restoredStates : nil,
+                                       restoreFallbacks: restore != nil ? executor.restoreFallbacks.values.reduce(0, +) : nil)
+        if restore != nil {
+            let fallbacks = executor.restoreFallbacks.values.reduce(0, +)
+            progress("--confirm-kills restore: \(executor.restoredStates) runs without mutants replaced by putting the snapshot back; \(fallbacks) run as with auto because it could not be done")
+            if fallbacks > 0 {
+                let reasons = executor.restoreFallbacks.sorted { $0.value > $1.value }.prefix(5).map { "\($0.value)× \($0.key)" }.joined(separator: "; ")
+                warnings.append(RunWarning(kind: "restoreFellBack", message: "--confirm-kills restore: \(fallbacks) times the snapshot could not stand for a run without mutants, and the tests were run instead: \(reasons)"))
+            }
+        }
         if config.confirmKills == .full, executor.detectionsRunAgainstAll > 0 {
             progress("--confirm-kills full: \(executor.detectionsRunAgainstAll) mutants that their narrowed tests detected were run against the whole selection; passed there (Survived): \(executor.detectionsNotConfirmedByAll)")
         }
@@ -905,6 +994,27 @@ public final class RunSession {
                let hint = Self.controlShareHint(controlSeconds: executor.controlSeconds, mutantPhaseSeconds: durations.mutantPhaseSeconds ?? 0, sharedProcess: sharedSetup != nil) {
                 progress(hint)
             }
+        }
+
+        // Where the time went: the parts that are as long as runs of the tests, and the rest
+        if let phase = durations.mutantPhaseSeconds, executor.executedCount > 0 {
+            let b = executor.breakdown
+            // The parts are summed over the workers; `fitted` makes those of the time they ran side by side shares of it
+            let breakdown = RunDurations.Breakdown.fitted(RunDurations.Breakdown(
+                startupRunSeconds: b.startupRunSeconds, startupRunProcesses: b.startupRunProcesses,
+                wholeSelectionSeconds: b.wholeSelectionSeconds, wholeSelectionMutants: b.wholeSelectionMutants, wholeSelectionReasons: b.wholeSelectionReasons,
+                wholeSelectionStopped: b.wholeSelectionStopped,
+                ownTestsSeconds: b.ownTestsSeconds, ownTestsMutants: b.ownTestsMutants, recheckSeconds: b.recheckSeconds, recheckMutants: b.recheckMutants,
+                controlSeconds: executor.controlSeconds, finalBaselineSeconds: durations.finalBaselineSeconds, lostProcesses: b.lostProcesses,
+                otherSeconds: 0, totalSeconds: 0), phaseSeconds: phase, parallel: executor.parallelSpan.map { span in
+                    (RunDurations.Breakdown(startupRunSeconds: span.breakdown.startupRunSeconds, startupRunProcesses: 0, wholeSelectionSeconds: span.breakdown.wholeSelectionSeconds,
+                                            wholeSelectionMutants: 0, wholeSelectionReasons: [:], ownTestsSeconds: span.breakdown.ownTestsSeconds, ownTestsMutants: 0,
+                                            recheckSeconds: span.breakdown.recheckSeconds, recheckMutants: 0, controlSeconds: span.controlSeconds, finalBaselineSeconds: 0,
+                                            lostProcesses: 0, otherSeconds: 0, totalSeconds: 0),
+                     span.seconds, span.workerSeconds, executor.workerCount)
+                })
+            durations.breakdown = breakdown
+            progress(breakdown.line)
         }
 
         // Keep what this run killed for later runs (--reuse). A run whose final baseline failed, or did not take place
@@ -964,7 +1074,7 @@ public final class RunSession {
         parts.append("xcode=\(x.container)|\(x.scheme ?? "")|\(x.destination)|\(x.testPlan ?? "")|\(x.extraBuildArguments)|\(x.extraTestArguments)|\(x.onlyTesting)|\(x.skipTesting)|\(x.buildSettings)|\(x.workingDirectory ?? "")")
         parts.append("prepare=\(config.prepareCommand ?? "")")
         parts.append("timeout=\(config.timeoutFactor)x+\(config.timeoutConstant)")
-        parts.append("selectTests=\(config.selectTestsAutomatically)|reach=\(config.selectTestsByReach)")
+        parts.append("selectTests=\(config.selectTestsAutomatically)|reach=\(config.selectTestsByReach)|impact=\(config.impactMap?.path ?? "")")
         parts.append("confirmKills=\(config.confirmKills.rawValue)")
         // What an observation in the journal holds and when it is written (2: only settled runs, with the suites
         // they were narrowed to). A journal of another form is not continued
@@ -972,7 +1082,7 @@ public final class RunSession {
         if config.selectTestsByReach { parts.append("recheckSurvivors=\(config.recheckSurvivors)") }
         // How mutants are run decides what an observation in the journal means (a pass in a shared process is a verdict
         // only with --trust-shared-survivors; timeouts and confirmations depend on the workers)
-        parts.append("sharedProcess=\(config.sharedProcessAuto ? "auto" : String(config.sharedProcess))|trust=\(config.trustSharedSurvivors)|directLaunch=\(config.directLaunch)|narrowGate=\(config.narrowGate)")
+        parts.append("sharedProcess=\(config.sharedProcessAuto ? "auto" : String(config.sharedProcess))|trust=\(config.trustSharedSurvivors)|directLaunch=\(config.directLaunch)|narrowGate=\(config.narrowGate)|stopAtFirstFailure=\(config.stopAtFirstFailure)")
         parts.append("workers=\(config.workers)|\(config.additionalDestinations)")
         parts.append("copyRoot=\(config.copyRoot?.path ?? "")")
         if config.reuse { parts.append("reuse") }
@@ -998,6 +1108,59 @@ public final class RunSession {
               let status = try? Subprocess.capture(["git", "-C", root.path, "status", "--porcelain"], timeout: 120), status.status == 0 else { return nil }
         return RunReport.Commit(sha: head.output.trimmingCharacters(in: .whitespacesAndNewlines),
                                 dirty: !status.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    /// `--select-tests impact`: the suites for the files changed since the map's commit, or why all tests run.
+    func impactSelection(map url: URL, xctestrun: URL) -> (suites: [String]?, commit: String, changedFiles: [String], newSuites: [String], reasons: [String]) {
+        guard let data = try? Data(contentsOf: url), let map = try? JSONDecoder().decode(ImpactMap.self, from: data) else {
+            return (nil, "", [], [], ["the impact map \(url.path) could not be read"])
+        }
+        guard map.version == ImpactMap.formatVersion else { return (nil, map.commit, [], [], ["the impact map has format version \(map.version), this tool reads \(ImpactMap.formatVersion)"]) }
+        let root = config.root.path
+        guard let ancestor = try? Subprocess.capture(["git", "-C", root, "merge-base", "--is-ancestor", map.commit, "HEAD"], timeout: 60), ancestor.status == 0 else {
+            return (nil, map.commit, [], [], ["the map's commit \(map.commit.prefix(10)) is not an ancestor of HEAD in this clone (fetch the history, or make a new map)"])
+        }
+        var changed: Set<String> = []
+        for arguments in [["diff", "--name-only", "--no-renames", map.commit, "HEAD"], ["diff", "--name-only", "--no-renames", "HEAD"], ["ls-files", "--others", "--exclude-standard"]] {
+            guard let out = try? Subprocess.capture(["git", "-C", root, "-c", "core.quotepath=false"] + arguments, timeout: 120), out.status == 0 else {
+                return (nil, map.commit, [], [], ["git could not list the files changed since \(map.commit.prefix(10))"])
+            }
+            changed.formUnion(out.output.split(whereSeparator: \.isNewline).map(String.init))
+        }
+        let targets = TestSelector.testTargets(xctestrun: xctestrun).filter { !$0.isUITest }.map(\.name)
+        let files = changed.sorted()
+        switch map.selection(changed: files, source: { try? String(contentsOf: self.config.root.appendingPathComponent($0), encoding: .utf8) }, testTargets: targets) {
+        case let .suites(suites, newSuites):
+            if suites.isEmpty { return (nil, map.commit, files, [], ["none of the changed files is in the map or declares tests"]) }
+            return (suites, map.commit, files, newSuites, [])
+        case let .all(reasons):
+            return (nil, map.commit, files, [], reasons)
+        }
+    }
+
+    /// `--confirm-kills restore`: the snapshot, or why it cannot be used. It needs one iOS simulator named by id,
+    /// one app-hosted test target (the containers are those of the host app), and one worker.
+    func prepareRestore(xctestrun: URL, xcode: Xcode) -> Result<SimulatorRestore, SimulatorRestore.Failure> {
+        guard config.workers <= 1, config.additionalDestinations.isEmpty else { return .failure(.init("it is used with one worker only")) }
+        guard let udid = xcode.simulatorUDID else { return .failure(.init("the destination is not an iOS simulator named by id; on macOS there are no app containers to put back")) }
+        guard case let .success(units) = SharedProcess.units(xctestrun: xctestrun, options: xcode.options), !units.isEmpty else {
+            return .failure(.init("the test targets of the .xctestrun file could not be read"))
+        }
+        let hosts = Set(units.compactMap { $0.isAppHosted ? $0.hostBundleIdentifier : nil })
+        guard units.allSatisfy(\.isAppHosted), hosts.count == 1, let bundle = hosts.first, let app = units.first?.hostPath, !app.isEmpty else {
+            return .failure(.init("it needs app-hosted unit tests with one host app; tests without a host app keep their state in places that are not put back"))
+        }
+        let install = try? Subprocess.capture(["/usr/bin/xcrun", "simctl", "install", udid, app], timeout: 600)
+        guard install?.status == 0 else { return .failure(.init("the host app could not be installed on the simulator before the baseline")) }
+        let made = SimulatorRestore(udid: udid, bundleIdentifier: bundle, directory: config.workDirectory.appendingPathComponent("restore/snapshot"))
+        do {
+            try made.take()
+        } catch let failure as SimulatorRestore.Failure {
+            return .failure(failure)
+        } catch {
+            return .failure(.init("\(error)"))
+        }
+        return .success(made)
     }
 
     /// The choice of `--shared-process auto`. A run that is continued (`--resume`) keeps the choice of the run it

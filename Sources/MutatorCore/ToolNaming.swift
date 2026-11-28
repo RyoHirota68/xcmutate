@@ -15,7 +15,7 @@ public enum ToolNaming {
     /// First line of the helper appended to every mutated file.
     public static let helperMarker = "// \(toolName): generated helper. Do not edit."
     /// Config file looked up in `--root`.
-    public static let configFileName = "xcmutate.config.json"
+    public static let configFileName = "xcmutate.yml"
     /// Accepted (equivalent) mutants file looked up in `--root`.
     public static let acceptedFileName = "xcmutate.accepted.json"
     /// Marker file written into every work directory.

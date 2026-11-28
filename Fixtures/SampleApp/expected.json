@@ -2131,7 +2131,7 @@
     {
       "id": "O6",
       "section": "7.9",
-      "title": "設定（xcmutate.config.json の aridCalls）で対象外にした呼び出し",
+      "title": "設定（xcmutate.yml の aridCalls）で対象外にした呼び出し",
       "file": "SampleApp/Operators/OperatorCases.swift",
       "mutants": [
         {
@@ -2385,7 +2385,7 @@
           "file": "SampleApp/SwiftUI/SwiftUICases.swift"
         }
       ],
-      "note": "nil-coalescing-default と arithmetic は既定で無効。検証用プロジェクトでは xcmutate.config.json の enabledOperators で arithmetic を有効にしている。式ごとのスイッチの上限は 12"
+      "note": "nil-coalescing-default と arithmetic は既定で無効。検証用プロジェクトでは xcmutate.yml の enabledOperators で arithmetic を有効にしている。式ごとのスイッチの上限は 12"
     },
     {
       "id": "SE",

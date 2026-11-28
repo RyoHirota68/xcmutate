@@ -299,6 +299,102 @@ struct LimitsAndReportingTests {
         #expect(SharedProcess.exitReason(in: []) == nil)
     }
 
+    /// `--select-tests impact`: the suites of the files changed since the map was made, and when all tests run instead.
+    @Test func anImpactMapChoosesTheSuitesOfChangedFiles() {
+        let map = ImpactMap(tool: "0", commit: "abc", dirty: false,
+                            suites: ["AppTests/CartTests", "AppTests/PriceTests", "AppTests/LaunchTests"],
+                            files: ["App/Cart.swift": ["AppTests/CartTests"], "App/Price.swift": ["AppTests/CartTests", "AppTests/PriceTests"],
+                                    "App/Launch.swift": [ImpactMap.everything], "App/Empty.swift": []])
+        let sources: [String: String] = [
+            "AppTests/CartTests.swift": "import XCTest\nfinal class CartTests: XCTestCase { func testTotal() {} }",
+            "AppTests/NewTests.swift": "import XCTest\nfinal class NewTests: XCTestCase { func testNew() {} }",
+            "AppTests/Helpers.swift": "func makeCart() -> Int { 1 }",
+            "AppTests/Free.swift": "import Testing\n@Test func free() {}",
+        ]
+        func select(_ files: [String]) -> ImpactMap.Selection { map.selection(changed: files, source: { sources[$0] }, testTargets: ["AppTests"]) }
+        #expect(select(["App/Price.swift"]) == .suites(["AppTests/CartTests", "AppTests/PriceTests"], newSuites: []))
+        // Documentation and CI settings do not count; a changed test file adds its suites, a new one too
+        #expect(select(["App/Cart.swift", "README.md", ".github/workflows/ci.yml", "AppTests/CartTests.swift", "AppTests/NewTests.swift"])
+                == .suites(["AppTests/CartTests", "AppTests/NewTests"], newSuites: ["NewTests"]))
+        // A file without a reached switch: no suite (its mutants are NotReached among the selected tests)
+        #expect(select(["App/Empty.swift"]) == .suites([], newSuites: []))
+        // Everything else runs the whole selection, with the reason
+        for (file, reason) in [("App/Launch.swift", "outside the tests"), ("App/New.swift", "not in the map"), ("App/Assets.xcassets/Contents.json", "not a Swift file"),
+                               ("AppTests/Helpers.swift", "declares no tests"), ("AppTests/Free.swift", "outside a type")] {
+            guard case let .all(reasons) = select(["App/Cart.swift", file]) else {
+                Issue.record("\(file) did not run the whole selection")
+                continue
+            }
+            #expect(reasons.count == 1 && reasons[0].contains(reason), "\(reasons)")
+        }
+    }
+
+    /// `--stop-when-gate-decided`: the gates' result is decided when no result of the mutants still to come can change it.
+    @Test func aGateIsDecidedWhenTheMutantsStillToComeCannotChangeIt() {
+        let results = ConfigJournalAndReportTests.report([(.killed, "A.swift"), (.killed, "A.swift"), (.survived, "A.swift"), (.notReached, "B.swift")]).results
+        // --fail-on-survived: the first undetected mutant decides it; an accepted one does not count
+        #expect(Gate(failOnSurvived: true).decided(results: results, pending: 10, accepted: [])?.hasPrefix("fails: --fail-on-survived") == true)
+        let accepted = Set(results.filter { $0.status.isUndetected }.map(\.mutant.key))
+        #expect(Gate(failOnSurvived: true).decided(results: results, pending: 10, accepted: accepted) == nil)
+        // --fail-under: 2 detected, 2 undetected so far. With 2 to come: 33.3% at least, 66.7% at most
+        #expect(Gate(failUnder: 30).decided(results: results, pending: 2, accepted: [])?.hasPrefix("passes: --fail-under") == true)
+        #expect(Gate(failUnder: 70).decided(results: results, pending: 2, accepted: [])?.hasPrefix("fails: --fail-under") == true)
+        #expect(Gate(failUnder: 50).decided(results: results, pending: 2, accepted: []) == nil)
+        // A pass of --fail-under is not decided while another gate can still fail
+        var both = Gate(failUnder: 30)
+        both.earlierUndetected = Set(results.filter { $0.status.isUndetected }.map(\.mutant.key))
+        #expect(both.decided(results: results, pending: 2, accepted: []) == nil)
+        // --baseline-report: an undetected mutant that the earlier report did not have, in a file it examined
+        var baseline = Gate()
+        baseline.earlierUndetected = []
+        baseline.earlierFiles = ["A.swift"]
+        #expect(baseline.decided(results: results, pending: 5, accepted: [])?.hasPrefix("fails: --baseline-report, A.swift") == true)
+        baseline.earlierFiles = ["C.swift"]
+        #expect(baseline.decided(results: results, pending: 5, accepted: []) == nil)
+    }
+
+    /// The time of the mutant phase by its parts, largest first (a user asked where four hours had gone).
+    @Test func theBreakdownSaysWhereTheTimeWent() {
+        let breakdown = RunDurations.Breakdown(
+            startupRunSeconds: 1860, startupRunProcesses: 1, wholeSelectionSeconds: 7080, wholeSelectionMutants: 7,
+            wholeSelectionReasons: ["launch": 4, "uneven": 3], ownTestsSeconds: 1320, ownTestsMutants: 9, recheckSeconds: 0, recheckMutants: 0,
+            controlSeconds: 540, finalBaselineSeconds: 900, lostProcesses: 5, otherSeconds: 1020, totalSeconds: 12720)
+        #expect(breakdown.line == "time of the mutant phase and the final baseline 3h32m: mutants run alone against all tests 1h58m (7: 4 evaluated before the tests, 3 evaluated unequally often); runs without mutants at the start of shared processes 31m00s (1); mutants run alone against their own tests 22m00s (9; 5 shared processes lost to crashes or hangs); final baseline 15m00s; runs without mutants between mutants 9m00s; the rest 17m00s (mutants in shared processes, starting processes)")
+        // Without narrowing every mutant runs all tests: no reasons
+        let plain = RunDurations.Breakdown(startupRunSeconds: 0, startupRunProcesses: 0, wholeSelectionSeconds: 12, wholeSelectionMutants: 6,
+                                           wholeSelectionReasons: ["selection": 6], ownTestsSeconds: 0, ownTestsMutants: 0, recheckSeconds: 0, recheckMutants: 0,
+                                           controlSeconds: 5, finalBaselineSeconds: 0, lostProcesses: 0, otherSeconds: 0, totalSeconds: 16)
+        #expect(plain.line == "time of the mutant phase and the final baseline 16s: mutants run alone against all tests 12s (6); runs without mutants between mutants 5s")
+        var stopped = plain
+        stopped.wholeSelectionStopped = 4
+        #expect(stopped.line.contains("mutants run alone against all tests 12s (6; 4 stopped at the first failing test)"))
+    }
+
+    /// A run of all selected tests that the driver stopped at its first failing test: Killed on the same conditions as
+    /// a run to the end (the switch evaluated as active, a failing test), and nothing else is taken from it.
+    @Test func aRunStoppedAtItsFirstFailureIsKilledOnTheSameEvidence() {
+        let failed = TestSummary(result: "Failed", totalTestCount: 312, passedTests: 311, failedTests: 1, skippedTests: 0, expectedFailures: 0,
+                                 failures: [.init(test: "CartTests/testTotal()", message: "failed with the mutant on; the run was stopped here")])
+        var observation = MutantObservation(key: "k", id: 3, attempt: 1, exitStatus: 1, timedOut: false, summary: failed, activated: true,
+                                            runnerErrorPattern: nil, durationSeconds: 40, timeoutSeconds: 900)
+        let baseline = BaselineEvidence(testCount: 6904, passedTests: 6904, skippedTests: 0)
+        // Without the mark, fewer tests than the baseline's is not a verdict
+        #expect(Judgement.classify(observation, baseline: baseline).status == .runnerError)
+        observation.stoppedAtFirstFailure = true
+        let judged = Judgement.classify(observation, baseline: baseline)
+        #expect(judged.status == .killed)
+        #expect(judged.killedBy == ["CartTests/testTotal()"])
+        #expect(judged.detail == "CartTests/testTotal() failed; the run of all selected tests was stopped at its first failing test (312 of 6904 tests had run)")
+        // The switch was not evaluated as active: not the mutant's doing
+        var inactive = observation
+        inactive.activated = false
+        #expect(Judgement.classify(inactive, baseline: baseline).status != .killed)
+        // A run that ran out of time is not a stopped failure
+        var timedOut = observation
+        timedOut.timedOut = true
+        #expect(Judgement.classify(timedOut, baseline: baseline).status != .killed)
+    }
+
     /// The heartbeat of a quiet phase, and what a log shows of a build and of a run of tests.
     @Test func aQuietPhaseSaysHowFarItHasGot() throws {
         #expect(RunProgress.heartbeatLine(phase: "build", elapsed: 482, hint: "1,204 source files compiled so far") == "build: still running after 8m02s (1,204 source files compiled so far)")

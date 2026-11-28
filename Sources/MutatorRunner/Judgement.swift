@@ -28,6 +28,16 @@ public enum Judgement {
             return Result(status: .killed, killedBy: detection.tests,
                           detail: detection.quoted.map { "\($0.test) failed in a shared process" })
         }
+        // A run of all selected tests that the driver stopped at its first failing test: up to that test it is the run of
+        // all tests (the same order), so the failure is the same evidence as in a run to the end. The count of tests
+        // is that of the tests that ran; the other conditions of a Killed (the switch evaluated as active, the tests
+        // passed without mutants on the destination since the last run that did not pass) are those of any run.
+        if o.stoppedAtFirstFailure == true, !o.timedOut, o.activated, let summary = o.summary, summary.failedTests > 0 {
+            let detection = summary.detection
+            let ran = baseline.map { "\(summary.totalTestCount) of \($0.testCount) tests" } ?? "\(summary.totalTestCount) tests"
+            return Result(status: .killed, killedBy: detection.tests,
+                          detail: "\(detection.quoted?.test ?? "a test") failed; the run of all selected tests was stopped at its first failing test (\(ran) had run)")
+        }
         // The host ended unexpectedly and the run was stopped there (`xcodebuild` would have started the host again for
         // every test that is left). No summary exists; the crash is what the log of xcodebuild said.
         if let test = o.crashedIn {

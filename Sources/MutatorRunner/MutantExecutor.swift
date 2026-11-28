@@ -56,6 +56,8 @@ final class MutantExecutor: @unchecked Sendable {
         var switchCount: Int
         /// `--confirm-kills`.
         var confirmation = KillConfirmation.auto
+        /// `--confirm-kills restore`: the snapshot of the destination taken before the baseline (one worker only).
+        var restore: SimulatorRestore? = nil
         /// Several workers run on one destination (a Mac): their test processes can collide with each other.
         var sharedDestination = false
         /// With `--select-tests reach`, unless `--no-recheck-survivors`: a mutant that survives its narrowed tests is
@@ -67,6 +69,14 @@ final class MutantExecutor: @unchecked Sendable {
 
     private let inputs: Inputs
     private let workers: [Worker]
+    /// The number of workers (destinations) that the mutant phase started with.
+    var workerCount: Int { workers.count }
+    /// When a worker was dropped while the workers ran side by side.
+    private var dropTimes: [Int: Date] = [:]
+    /// With several workers: the breakdown and the runs without mutants as they stood when the workers were done, how
+    /// long they had run side by side, and the time the workers were there for (less than workers × that time when
+    /// some were dropped). What comes after (the provisional results run again alone) is serial.
+    private(set) var parallelSpan: (breakdown: Breakdown, controlSeconds: Double, seconds: Double, workerSeconds: Double)?
     private let lock = NSLock()
 
     // State (guarded by `lock`)
@@ -281,6 +291,86 @@ final class MutantExecutor: @unchecked Sendable {
     }
     private var liveSessionDirectories: [Int: (URL, Date)] = [:]
 
+    /// Where the time of the mutant phase went (`RunDurations.Breakdown`), as measured while it ran.
+    private(set) var breakdown = Breakdown()
+    struct Breakdown {
+        var startupRunSeconds = 0.0
+        var startupRunProcesses = 0
+        var wholeSelectionSeconds = 0.0
+        var wholeSelectionMutants = 0
+        var wholeSelectionReasons: [String: Int] = [:]
+        var wholeSelectionStopped = 0
+        var ownTestsSeconds = 0.0
+        var ownTestsMutants = 0
+        var recheckSeconds = 0.0
+        var recheckMutants = 0
+        var lostProcesses = 0
+    }
+    /// Whether a run of `mutant` alone goes to the driver and stops at its first failing test: with shared processes
+    /// (the driver works on this project), against all selected tests, in one unit, not in random order, not while
+    /// workers run side by side, and not for the rechecks (a survivor's run against all tests has its own path).
+    private func stopsAtFirstFailure(planned: (xcode: Xcode, evidence: BaselineEvidence, selected: [String]?), mutant: Mutant, provisional: Bool) -> Bool {
+        guard inputs.runner == nil, inputs.config.stopAtFirstFailure, let setup = inputs.shared, setup.units.count == 1,
+              planned.selected == nil, !provisional else { return false }
+        return locked {
+            guard sharedUnusable == nil, !rechecking.contains(mutant.id), !confirmingAgainstAll.contains(mutant.id) else { return false }
+            if setup.units[0].target.randomOrder {
+                if !randomOrderNoted {
+                    randomOrderNoted = true
+                    let message = "The tests run in random order (TestExecutionOrdering = random in the .xctestrun file): a mutant run by itself against all selected tests is run to the end, not stopped at its first failing test, because the driver would run the tests in an order of its own."
+                    progress(message)
+                    warnings.append(RunWarning(kind: "randomTestOrder", message: message))
+                }
+                return false
+            }
+            return true
+        }
+    }
+    private var randomOrderNoted = false
+
+    /// One run of `mutant` against all selected tests by the driver, with the mutant on from the start, stopped at the
+    /// first failing test. Returns the observation when the driver gave an answer: every test passed (as many as in
+    /// the baseline), or tests failed with the switch evaluated as active. nil: run it under xcodebuild instead.
+    private func runToFirstFailure(_ mutant: Mutant, worker: Worker, planned: (xcode: Xcode, evidence: BaselineEvidence, selected: [String]?),
+                                   attempt: Int) throws -> (MutantObservation, log: String)? {
+        guard let setup = inputs.shared else { return nil }
+        let launcher = locked { sessionLauncher }
+        let directory = inputs.session.sessionsDirectory.appendingPathComponent("first-failure-w\(worker.index)")
+        let trace = inputs.session.tracesDirectory.appendingPathComponent("\(mutant.id)-first-failure.trace")
+        try? FileManager.default.removeItem(at: trace)
+        let entry = SharedProcess.Entry(id: mutant.id, only: nil, tests: nil)
+        let started = Date()
+        let outcome = try SharedProcess.runSession(.single(entry, active: mutant.id, trace: trace), setup: setup, unit: 0, launcher: launcher,
+                                                   expectedTests: nil, xcode: worker.xcode, directory: directory, singleTimeout: timeout(for: nil))
+        let seconds = Date().timeIntervalSince(started)
+        if InterruptState.isInterrupted { return nil }
+        let activated = Trace.read(trace).activated.contains(mutant.id)
+        if launcher == .direct { giveUpAfterBackground(outcome, directory: directory, name: "direct-launch-first-failure-\(mutant.id)") }
+        guard outcome.unusable == nil, outcome.ending == .done, let single = outcome.events.single, activated else { return nil }
+        let expected = planned.evidence.testCount
+        var observation: MutantObservation
+        if single.status == "pass", single.tests == expected {
+            let summary = TestSummary(result: "Passed", totalTestCount: expected, passedTests: expected, failedTests: 0, skippedTests: 0, expectedFailures: 0, failures: [])
+            observation = MutantObservation(key: mutant.key, id: mutant.id, attempt: attempt, exitStatus: 0, timedOut: false, summary: summary,
+                                            activated: true, runnerErrorPattern: nil, durationSeconds: seconds, timeoutSeconds: timeout(for: nil))
+        } else if single.status == "fail", !single.failed.isEmpty {
+            let failures = single.failed.map { TestSummary.Failure(test: $0, message: "failed with the mutant on; the run was stopped here") }
+            let summary = TestSummary(result: "Failed", totalTestCount: single.tests, passedTests: max(single.tests - single.failed.count, 0),
+                                      failedTests: single.failed.count, skippedTests: 0, expectedFailures: 0, failures: failures)
+            observation = MutantObservation(key: mutant.key, id: mutant.id, attempt: attempt, exitStatus: 1, timedOut: false, summary: summary,
+                                            activated: true, runnerErrorPattern: nil, durationSeconds: seconds, timeoutSeconds: timeout(for: nil))
+            observation.stoppedAtFirstFailure = true
+        } else {
+            return nil
+        }
+        observation.sharedProcess = false
+        observation.directLaunch = launcher == .direct
+        return (observation, outcome.log)
+    }
+
+    /// Why a shared process sent a mutant back to run against all tests ("launch", "uneven").
+    private var sentBack: [Int: String] = [:]
+
     /// Shared processes whose second run without mutants at the start ran only the suites of their mutants.
     private(set) var narrowedGates = 0
 
@@ -474,8 +564,9 @@ final class MutantExecutor: @unchecked Sendable {
     /// Call with the lock held.
     private func store(_ mutant: Mutant, _ status: MutantStatus, killedBy: [String] = [], duration: Double? = nil, attempts: Int = 0,
                        detail: String? = nil, selected: [String]? = nil, sharedProcess: Bool? = nil, directLaunch: Bool? = nil,
-                       countSelection: Bool = true) {
+                       countSelection: Bool = true, stoppedAtFirstFailure: Bool? = nil) {
         var result = MutantResult(mutant: mutant, status: status, killedBy: killedBy, durationSeconds: duration, attempts: attempts, detail: detail)
+        result.stoppedAtFirstFailure = stoppedAtFirstFailure
         result.sharedProcess = sharedProcess
         result.directLaunch = directLaunch
         if inputs.selector != nil, countSelection {
@@ -489,6 +580,16 @@ final class MutantExecutor: @unchecked Sendable {
         // A recheck is counted when its run has given the mutant a result, not when it was queued
         if rechecking.contains(mutant.id) { recheckedSurvivors += 1 } else { remaining.firstVerdicts += 1 }
         results[mutant.id] = result
+    }
+
+    /// Call with the lock held. `--stop-when-gate-decided`: once the gates' result cannot change, the run is cut
+    /// short as by the time limit (the report covers what has a result; `--resume` can go on).
+    private func checkGate() {
+        guard let gate = inputs.config.stopWhenGateDecided, InterruptState.gateDecision == nil, !InterruptState.isInterrupted else { return }
+        guard let reason = gate.decided(results: Array(results.values), pending: max(total - executedCount, 0), accepted: acceptedKeys) else { return }
+        if InterruptState.decideGate(reason) {
+            progress("the gate's result is decided (\(reason)); stopping child processes and writing the results so far (--stop-when-gate-decided)")
+        }
     }
 
     /// Call with the lock held.
@@ -505,6 +606,7 @@ final class MutantExecutor: @unchecked Sendable {
                         mutant.id, mutant.operator.rawValue, mutant.file, mutant.start.line, shown, seconds, plain ? "" : how + ", ",
                         RemainingTime.format(estimate, formatDuration: RunSession.formatDuration)))
         RunProgress.mutant(index: executedCount, total: total, mutant: mutant, status: status, seconds: seconds, how: plain ? "" : how, remaining: estimate)
+        checkGate()
     }
 
     /// Call with the lock held. What the mutants without a result still cost, by the kind of run each of them needs.
@@ -561,6 +663,7 @@ final class MutantExecutor: @unchecked Sendable {
         }
         total = toRun.count
         started = Date()
+        locked { checkGate() }
         if inputs.shared != nil { sharedQueue = toRun } else { aloneQueue = toRun.map { ($0, nil) } }
 
         let group = DispatchGroup()
@@ -580,6 +683,12 @@ final class MutantExecutor: @unchecked Sendable {
 
         // Results seen while several workers were running that need one more run: alone, on the first destination that is left
         parallelPhase = false
+        if workers.count > 1 {
+            let end = Date()
+            let seconds = end.timeIntervalSince(started)
+            let workerSeconds = workers.reduce(0.0) { $0 + (dropTimes[$1.index] ?? end).timeIntervalSince(started) }
+            locked { parallelSpan = (breakdown, controlSeconds, seconds, workerSeconds) }
+        }
         if !provisional.isEmpty, !InterruptState.isInterrupted, let worker = workers.first(where: { !droppedWorkers.contains($0.index) }) {
             // Nothing is known about what the parallel runs left behind on a destination that they shared
             if inputs.sharedDestination { ledgers[worker.index, default: .unknown].runDidNotPass() }
@@ -826,8 +935,27 @@ final class MutantExecutor: @unchecked Sendable {
 
     /// `reason` with the paths of the session directory replaced by those of the copies that are kept.
     static func reasonWithEvidence(_ reason: String, of outcome: SharedProcess.SessionResult, directory: URL, logs: URL, number: Int) -> String {
-        let kept = SharedProcess.keepEvidence(sessionDirectory: directory, logs: logs, name: "direct-launch-\(number)")
+        reasonWithEvidence(reason, of: outcome, directory: directory, logs: logs, name: "direct-launch-\(number)")
+    }
+
+    static func reasonWithEvidence(_ reason: String, of outcome: SharedProcess.SessionResult, directory: URL, logs: URL, name: String) -> String {
+        let kept = SharedProcess.keepEvidence(sessionDirectory: directory, logs: logs, name: name)
         return reason.replacingOccurrences(of: directory.path, with: kept.directory.path) + ". " + kept.note
+    }
+
+    /// The reason to stop starting hosts after a run in a host started by the tool, outside the shared processes
+    /// (whose own handling gives up on any `unusable`): a host whose app stayed in the background. The next one would
+    /// go the same way. nil for any other outcome, which says nothing about later hosts.
+    static func backgroundGiveUpReason(_ outcome: SharedProcess.SessionResult) -> String? {
+        outcome.stoppedInBackground ? outcome.unusable : nil
+    }
+
+    /// Gives up starting hosts after `outcome` when `backgroundGiveUpReason` says so. The evidence is kept under
+    /// `name`, which is the run's own: several workers can get here at once, and only the first gives up.
+    private func giveUpAfterBackground(_ outcome: SharedProcess.SessionResult, directory: URL, name: String) {
+        guard let reason = Self.backgroundGiveUpReason(outcome), locked({ directUnusable == nil }) else { return }
+        let text = Self.reasonWithEvidence(reason, of: outcome, directory: directory, logs: inputs.session.logsDirectory, name: name)
+        locked { giveUpDirectLaunch(text) }
     }
 
     /// Call with the lock held. The tool stops starting test hosts itself; `xcodebuild` starts them from here on.
@@ -837,7 +965,7 @@ final class MutantExecutor: @unchecked Sendable {
         sessionLauncher = .xcodebuild
         aloneQueue += confirmQueue.map { ($0, nil) }
         confirmQueue = []
-        let message = "Test hosts were started by xcodebuild, not by the tool itself: \(reason)\(reason.hasSuffix(".") || reason.hasSuffix("|") ? "" : ".")"
+        let message = "xcmutate could not start the test host itself, so xcodebuild starts it from here on. The results are not affected; each later shared process, and each mutant that passes in one, costs a launch by xcodebuild instead (seconds each). Why: \(reason)\(reason.hasSuffix(".") || reason.hasSuffix("|") ? "" : ".")"
         progress(message)
         warnings.append(RunWarning(kind: "directLaunchUnavailable", message: message))
     }
@@ -1007,7 +1135,11 @@ final class MutantExecutor: @unchecked Sendable {
     /// at most). `wanted` nil: nothing is needed for the run that follows (only a destination in doubt is checked).
     /// Returns false if the worker cannot go on: the tests did not pass (the worker is dropped), or the tool was
     /// interrupted.
-    private func ensureClean(_ worker: Worker, scope wanted: ControlScope?) -> Bool {
+    /// `--confirm-kills restore`: runs without mutants replaced by putting the snapshot back, and why it was not done.
+    private(set) var restoredStates = 0
+    private(set) var restoreFallbacks: [String: Int] = [:]
+
+    private func ensureClean(_ worker: Worker, scope wanted: ControlScope?, allowRestore: Bool = true) -> Bool {
         // After a RunnerError the destination itself is in doubt, whatever --confirm-kills says: a destination that
         // stopped working fails every mutant within seconds and would take most of the queue from the healthy workers
         let healthCheck = locked { lastRunnerError[worker.index] != nil }
@@ -1022,6 +1154,25 @@ final class MutantExecutor: @unchecked Sendable {
             // A failing run without mutants puts every test in doubt again: the next attempt covers all of `wanted`
             guard var scope = locked({ dueControl(worker, wanted: wanted, forced: healthCheck && lastRunnerError[worker.index] != nil) }) else { return true }
             if widen { scope = .all }
+            // `--confirm-kills restore`: the destination back in the state from which the baseline passed, instead of
+            // a run that shows that what the last run left fails nothing. Not after a RunnerError (the destination
+            // itself is in doubt then, and only a run shows that it works), and not for the final baseline.
+            if allowRestore, attempt == 1, !healthCheck, worker.index == 0, let restore = inputs.restore {
+                let start = Date()
+                let problem = restore.putBack()
+                let restored: Bool = locked {
+                    controlSeconds += Date().timeIntervalSince(start)
+                    if let problem {
+                        restoreFallbacks[problem, default: 0] += 1
+                        return false
+                    }
+                    restoredStates += 1
+                    justNotPassed[worker.index] = nil
+                    ledgers[worker.index, default: .unknown].controlPassed(.all)
+                    return true
+                }
+                if restored { return true }
+            }
             let number = locked { () -> Int in controlRuns += 1; return controlRuns }
             let result = control(worker, number: number, scope: scope)
             if InterruptState.isInterrupted { return false }
@@ -1065,6 +1216,7 @@ final class MutantExecutor: @unchecked Sendable {
         locked {
             droppedWorkers.insert(worker.index)
             liveWorkers.removeAll { $0 == worker.index }
+            if parallelPhase { dropTimes[worker.index] = Date() }
             let message = Self.droppedMessage(who: workers.count > 1 ? "Worker \(worker.index + 1)" : "The destination", destination: worker.xcode.options.destination,
                                               attempts: attempts, notPassed: notPassed, logs: logs, screenshot: picture,
                                               isSimulator: worker.xcode.options.destination.contains("Simulator") || picture != nil)
@@ -1087,7 +1239,7 @@ final class MutantExecutor: @unchecked Sendable {
     /// nothing to add there.
     func settleDestinations() -> Set<Int> {
         guard !InterruptState.isInterrupted else { return [] }
-        for worker in workers where locked({ liveWorkers.contains(worker.index) }) { _ = ensureClean(worker, scope: .all) }
+        for worker in workers where locked({ liveWorkers.contains(worker.index) }) { _ = ensureClean(worker, scope: .all, allowRestore: false) }
         return locked { Set(liveWorkers.filter { ledgers[$0]?.isDirectlyAfterControl(of: .all) == true && ledgers[$0]?.missing(for: .all) == nil }) }
     }
 
@@ -1106,7 +1258,10 @@ final class MutantExecutor: @unchecked Sendable {
             markEven(events.begun)
             for mutant in todo where verdicts[mutant.id]?[unit] == nil {
                 let verdict = SharedProcess.verdict(for: mutant.id, events: events, ending: ending ?? .exited, confirmation: setup.confirmation, hang: hang)
-                if let reason = events.skipped[mutant.id], reason == "launch" || reason == "uneven" { markUnnarrowed(mutant.id) }
+                if let reason = events.skipped[mutant.id], reason == "launch" || reason == "uneven" {
+                    markUnnarrowed(mutant.id)
+                    sentBack[mutant.id] = reason
+                }
                 switch verdict {
                 case .notRun:
                     continue
@@ -1397,7 +1552,12 @@ final class MutantExecutor: @unchecked Sendable {
                         todo.insert(todo.remove(at: position), at: 0)
                     }
                     remaining.shared.add(Date().timeIntervalSince(sessionStart), count: before - todo.count)
+                    if gate == .full, let first = events.controls[1] {
+                        breakdown.startupRunSeconds += first.seconds + (events.controls[2]?.seconds ?? 0)
+                        breakdown.startupRunProcesses += 1
+                    }
                     if outcome.ending == .exited || outcome.ending == .timedOut {
+                        breakdown.lostProcesses += 1
                         // The process was lost to a crash or a hang
                         note(gain: false)
                         if Self.sharingUnfavourable(recentOutcomes) { paused = true }
@@ -1448,7 +1608,7 @@ final class MutantExecutor: @unchecked Sendable {
                 let how = outcome.events.single.map { "\($0.status)\($0.failed.isEmpty ? "" : ": " + $0.failed.prefix(3).joined(separator: ", "))" }
                     ?? (outcome.ending == .timedOut ? "they did not finish in \(Int(inputs.timeout))s" : "the process ended before they had finished, \(SharedProcess.exitDescription(outcome.exitCode))")
                 problem = Self.reasonWithEvidence(outcome.unusable ?? "the tests of \(setup.units[unit].target.label) did not pass without mutants in a process started by the tool (\(how); log: \(outcome.log))",
-                                                  of: outcome, directory: directory, logs: inputs.session.logsDirectory, number: 0)
+                                                  of: outcome, directory: directory, logs: inputs.session.logsDirectory, name: "direct-launch-control-w\(worker.index)")
                 break
             }
             counts[unit] = single.tests
@@ -1503,6 +1663,8 @@ final class MutantExecutor: @unchecked Sendable {
             }
             guard outcome.unusable == nil, let single = outcome.events.single else {
                 problem = outcome.ending == .timedOut ? "the tests did not finish in time" : "the process ended without a result"
+                // The next host started by the tool would go the same way: xcodebuild starts them from here on
+                giveUpAfterBackground(outcome, directory: directory, name: "direct-launch-confirm-\(mutant.id)-\(unit)")
                 let kept = keepUnfinished(directory, name: "direct-confirm-\(mutant.id)-\(unit)", what: "the run of mutant #\(mutant.id) in a new process")
                 locked { warnPossibleStateLeft(worker, what: "the run of mutant #\(mutant.id) in a new process", log: kept) }
                 try? FileManager.default.removeItem(at: directory)
@@ -1526,6 +1688,8 @@ final class MutantExecutor: @unchecked Sendable {
             noteRun(worker, passed: problem == nil, mutant: mutant)
             if whole {
                 remaining.recheck.add(seconds)
+                breakdown.recheckSeconds += seconds
+                breakdown.recheckMutants += 1
             } else {
                 remaining.confirm.add(seconds)
                 remaining.confirmed += 1
@@ -1587,6 +1751,9 @@ final class MutantExecutor: @unchecked Sendable {
         var stoppedRunSeconds = 0.0
         /// The observations of this call, written to the journal when the mutant gets its result from them.
         var observed: [MutantObservation] = []
+        // A run of all selected tests goes to the driver and stops at its first failing test, as long as the driver
+        // gives an answer (a pass of every test, or failing tests); anything else is run under xcodebuild as before
+        var stopEarly = stopsAtFirstFailure(planned: planned, mutant: mutant, provisional: provisional)
         /// Runs the mutant until it has a result that is not a RunnerError (twice at most). False: stop here.
         func observe() throws -> Bool {
             var tries = 0
@@ -1595,7 +1762,11 @@ final class MutantExecutor: @unchecked Sendable {
                 tries += 1
                 let cleanBefore = locked { ledgers[worker.index]?.isDirectlyAfterControl(of: scope) == true }
                 func once() throws -> (MutantObservation, log: String) {
-                    try inputs.runner?.execute(mutant, worker: worker.index, attempt: attempt)
+                    if stopEarly {
+                        if let early = try runToFirstFailure(mutant, worker: worker, planned: planned, attempt: attempt) { return early }
+                        stopEarly = false
+                    }
+                    return try inputs.runner?.execute(mutant, worker: worker.index, attempt: attempt)
                         ?? inputs.session.execute(mutant, xcode: runXcode, xctestrun: inputs.xctestrun, timeout: timeout(for: planned.selected), attempt: attempt,
                                                   watch: inputs.timeouts?.watch(for: planned.selected))
                 }
@@ -1697,6 +1868,19 @@ final class MutantExecutor: @unchecked Sendable {
         try locked {
             mutantSeconds += outcome.duration
             aloneCount += 1
+            // The runs of the mutant itself (the runs without mutants before it are counted with the others)
+            if rechecking.contains(mutant.id) || confirmingAgainstAll.contains(mutant.id) {
+                breakdown.recheckSeconds += outcome.duration
+                breakdown.recheckMutants += 1
+            } else if planned.selected == nil {
+                breakdown.wholeSelectionSeconds += outcome.duration
+                breakdown.wholeSelectionMutants += 1
+                let reason = sentBack[mutant.id] ?? (inputs.selector == nil ? "selection" : "unnarrowed")
+                breakdown.wholeSelectionReasons[reason, default: 0] += 1
+            } else {
+                breakdown.ownTestsSeconds += outcome.duration
+                breakdown.ownTestsMutants += 1
+            }
             if rechecking.contains(mutant.id) {
                 remaining.recheck.add(Date().timeIntervalSince(aloneStart))
             } else {
@@ -1726,8 +1910,10 @@ final class MutantExecutor: @unchecked Sendable {
                 if outcome.status == .killed { self.note(gain: true) }
                 if outcome.status == .crash || outcome.status == .timeout { self.note(gain: false) }
             }
+            let stopped = observed.last?.stoppedAtFirstFailure == true && outcome.status == .killed
+            if stopped, !rechecking.contains(mutant.id), !confirmingAgainstAll.contains(mutant.id), planned.selected == nil { breakdown.wholeSelectionStopped += 1 }
             store(mutant, outcome.status, killedBy: outcome.killedBy, duration: outcome.duration, attempts: attempt, detail: outcome.detail,
-                  selected: planned.selected, sharedProcess: inputs.shared == nil ? nil : false)
+                  selected: planned.selected, sharedProcess: inputs.shared == nil ? nil : false, stoppedAtFirstFailure: stopped ? true : nil)
             report(mutant, outcome.status, seconds: outcome.duration,
                    how: (workers.count > 1 && parallelPhase ? "worker \(worker.index + 1)" : "alone") + (note.map { ": \($0)" } ?? ""),
                    plain: inputs.shared == nil && workers.count == 1)

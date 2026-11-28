@@ -104,6 +104,70 @@ public enum SimulatorWorkers {
         return created
     }
 
+    // MARK: Privacy
+
+    /// What the privacy settings of a simulator say about some apps, as `simctl privacy` actions.
+    public struct Privacy: Equatable, Sendable {
+        /// `(grant|revoke, service, bundle identifier)`, in the order of the database.
+        public var actions: [[String]] = []
+        /// Decisions that `simctl privacy` cannot make (a service it has no name for, a limited access), as
+        /// `<service> for <bundle identifier>`.
+        public var notCopied: [String] = []
+    }
+
+    /// TCC services by the names that `simctl privacy` uses for them. Location is not kept in the TCC database and
+    /// cannot be read from it.
+    static let privacyServices: [String: String] = [
+        "kTCCServiceAll": "all", "kTCCServiceCalendar": "calendar", "kTCCServiceAddressBook": "contacts", "kTCCServicePhotos": "photos",
+        "kTCCServicePhotosAdd": "photos-add", "kTCCServiceMediaLibrary": "media-library", "kTCCServiceMicrophone": "microphone",
+        "kTCCServiceMotion": "motion", "kTCCServiceReminders": "reminders", "kTCCServiceSiri": "siri",
+    ]
+
+    /// The actions for the rows `service|client|auth_value` of a simulator's TCC database that concern `bundles`:
+    /// allowed (2) is a grant, denied (0) a revoke; anything else cannot be copied.
+    static func privacy(tccRows: String, bundles: [String]) -> Privacy {
+        var result = Privacy()
+        for line in tccRows.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count >= 3, bundles.contains(fields[1]) else { continue }
+            if let service = privacyServices[fields[0]], fields[2] == "2" || fields[2] == "0" {
+                result.actions.append([fields[2] == "2" ? "grant" : "revoke", service, fields[1]])
+            } else {
+                result.notCopied.append("\(fields[0]) for \(fields[1])")
+            }
+        }
+        return result
+    }
+
+    /// The privacy decisions of simulator `udid` (booted or not) about `bundles`, read from its TCC database without
+    /// changing it; nil when the database cannot be read.
+    static func privacy(of udid: String, bundles: [String]) -> Privacy? {
+        let database = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Developer/CoreSimulator/Devices/\(udid)/data/Library/TCC/TCC.db")
+        guard FileManager.default.fileExists(atPath: database.path) else { return Privacy() }   // nothing was ever decided
+        guard let result = try? Subprocess.capture(["/usr/bin/sqlite3", "-readonly", database.path, "SELECT service, client, auth_value FROM access WHERE client_type = 0"], timeout: 30),
+              result.status == 0 else { return nil }
+        return privacy(tccRows: result.output, bundles: bundles)
+    }
+
+    /// Gives the booted simulators `targets` the privacy decisions of simulator `source` about the apps `bundles`, so
+    /// that a test host there meets no permission dialog that it does not meet on `source` (a dialog over the app stops
+    /// shared processes). Returns what could not be copied, nil when everything was.
+    static func copyPrivacy(from source: String, to targets: [String], bundles: [String]) -> String? {
+        guard !bundles.isEmpty, !targets.isEmpty else { return nil }
+        guard let decisions = privacy(of: source, bundles: bundles) else {
+            return "the privacy settings of \(source) could not be read"
+        }
+        var failed: [String] = []
+        for target in targets {
+            for action in decisions.actions {
+                if simctl(["privacy", target, action[0], action[1], action[2]], timeout: 60)?.status != 0 { failed.append(action.joined(separator: " ")) }
+            }
+        }
+        let problems = decisions.notCopied.map { "\($0) (not a service that simctl privacy can set)" } + failed.map { "simctl privacy \($0) failed" }
+        return problems.isEmpty ? nil : problems.joined(separator: "; ")
+    }
+
     /// Shuts down and deletes a simulator that the tool created. This is clean-up: it runs to its end also after
     /// an interrupt (Ctrl-C), which stops every other child process.
     static func delete(_ udid: String) {

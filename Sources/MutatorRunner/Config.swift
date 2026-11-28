@@ -1,14 +1,13 @@
 import Foundation
 import MutatorCore
 
-/// `xcmutate.config.json` (placed at the project root and committed).
+/// `xcmutate.yml` (placed at the project root and committed; `xcmutate.config.json` of earlier versions is read too,
+/// `ConfigFile`).
 ///
-/// ```json
-/// {
-///   "aridCalls": ["Crashlytics", "LoginAnalytics", "sendAnalytics"],
-///   "disabledOperators": ["normalization-removal"],
-///   "maxSwitchesPerExpression": 8
-/// }
+/// ```yaml
+/// aridCalls: [Crashlytics, LoginAnalytics, sendAnalytics]
+/// disabledOperators: [normalization-removal]
+/// maxSwitchesPerExpression: 8
 /// ```
 public struct MutatorConfig: Codable, Sendable {
     public static let defaultName = ToolNaming.configFileName
@@ -35,20 +34,17 @@ public struct MutatorConfig: Codable, Sendable {
 
     public init() {}
 
-    /// Reads the config file. An empty configuration if it does not exist. If it cannot be read as JSON or a type does not match, throws an error with the file name.
+    /// Reads the config file (YAML or JSON, `ConfigFile`). An empty configuration if it does not exist. If it cannot be
+    /// read or a type does not match, throws an error with the file name.
     /// Unknown keys (typos) are not silently ignored but put into `loadWarnings`.
     public static func load(_ url: URL) throws -> MutatorConfig {
-        guard FileManager.default.fileExists(atPath: url.path) else { return MutatorConfig() }
-        let data = try Data(contentsOf: url)
-        let object: Any
-        do {
-            object = try JSONSerialization.jsonObject(with: data)
-        } catch {
-            throw ConfigError.invalid(url.path, "not valid JSON: \((error as NSError).userInfo[NSDebugDescriptionErrorKey] as? String ?? error.localizedDescription)")
-        }
-        guard let dictionary = object as? [String: Any] else {
-            throw ConfigError.invalid(url.path, "the top level must be a JSON object")
-        }
+        guard let dictionary = try ConfigFile.object(at: url) else { return MutatorConfig() }
+        // The keys of this type, as JSON for the decoder (a YAML file is read into the same values first)
+        let ownKeys = Set(CodingKeys.allCases.map(\.stringValue))
+        let own = dictionary.filter { ownKeys.contains($0.key) && !($0.value is NSNull) }
+        // A number that JSON cannot hold (`1e400` read as infinity) would stop the process in JSONSerialization
+        guard JSONSerialization.isValidJSONObject(own) else { throw ConfigError.invalid(url.path, "a number is out of range") }
+        let data = try JSONSerialization.data(withJSONObject: own)
         var config: MutatorConfig
         do {
             config = try JSONDecoder().decode(MutatorConfig.self, from: data)
@@ -57,9 +53,11 @@ public struct MutatorConfig: Codable, Sendable {
         } catch {
             throw ConfigError.invalid(url.path, "\(error)")
         }
-        let known = Set(CodingKeys.allCases.map(\.stringValue))
-        for key in dictionary.keys.sorted() where !known.contains(key) {
-            config.loadWarnings.append("\(url.lastPathComponent): unknown key `\(key)` is ignored (known keys: \(known.sorted().joined(separator: ", ")))")
+        // `run` and `profiles` hold run options; `RunProfile` reads them (and warns about their unknown keys)
+        let known = Set(CodingKeys.allCases.map(\.stringValue)).union(["run", "profiles"])
+        // In JSON, keys that start with `_` are explanations (`xcmutate init` wrote its reasons there before YAML)
+        for key in dictionary.keys.sorted() where !known.contains(key) && !ConfigFile.isComment(key, in: url) {
+            config.loadWarnings.append("\(url.lastPathComponent): unknown key `\(key)` is ignored (known keys: \(known.sorted().joined(separator: ", "))\(key.hasPrefix("_") ? "; write explanations as comments" : ""); see \(ConfigFile.keysDocumentation))")
         }
         return config
     }

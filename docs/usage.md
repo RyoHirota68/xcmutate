@@ -59,6 +59,66 @@ Three things to do before a run on a simulator:
 - **Boot the simulator first and leave it running: `xcrun simctl boot <UDID>`.** A simulator that `xcodebuild` has to boot itself is shut down again when the test run ends, so every mutant then includes a boot: about 26 s per mutant instead of about 5 s on the fixture. `run` warns when the simulator it was given is not booted.
 - **Grant on the simulator what the app asks for.** On a new simulator, the first use of the camera, of notifications or of the location makes the system show a dialog over the app, and the tests wait behind it. The tool then sees its runs without mutants fail, gives the destination up after three of them, and the remaining mutants are not run. Grant the permissions beforehand: `xcrun simctl privacy <UDID> grant camera <bundle id>`.
 
+
+### Run options in the config file: `run` and `profiles`
+
+The config file `xcmutate.yml` (YAML, at the root; [configuration.md](configuration.md) has its other keys) can hold the options of `run`: those under `run` apply to every run, those under `profiles.<name>` with `run --profile <name>`. The command line wins over the profile, the profile over `run`, `run` over the defaults; an option given on the command line replaces the file's value of that key (all values of a repeatable one). `xcmutate init` writes such a file, with the reason for each choice as a comment.
+
+```yaml
+run:
+  workspace: App.xcworkspace
+  scheme: App
+  destination: "platform=iOS Simulator,name=iPhone 17,OS=27.2"
+  onlyTesting: [AppTests]       # UI test targets are not supported
+profiles:
+  pr:
+    since: origin/main
+    selectTests: reach
+    sharedProcess: auto
+    failOnSurvived: true
+    stopWhenGateDecided: true
+  nightly:
+    selectTests: reach
+    sharedProcess: true
+    writeImpactMap: .build/xcmutate/impact.json
+    timeLimit: 3h
+```
+
+| Key | Option | Value |
+|---|---|---|
+| `workspace / project / package` | [`--workspace / --project / --package`](#options) | string |
+| `scheme` | [`--scheme`](#options) | string |
+| `destination` | [`--destination`](#options) | string or list of strings |
+| `testPlan` | [`--test-plan`](#options) | string |
+| `onlyTesting / skipTesting` | [`--only-testing / --skip-testing`](#--only-testing) | string or list |
+| `onlyTestConfiguration` | [`--only-test-configuration`](#options) | string or list |
+| `buildArg` | [`--build-arg`](#options) | string or list (a value that starts with `-` is passed as `--build-arg=<value>`) |
+| `packageCache` | [`--package-cache`](#options) | path |
+| `since` | [`--since`](#what-a-run-does) | string |
+| `selectTests` | [`--select-tests`](#selecting-tests) | `none`, `auto`, `reach`, `impact` |
+| `impactMap / writeImpactMap` | [`--impact-map / --write-impact-map`](#choosing-the-tests-from-an-earlier-run---select-tests-impact) | path |
+| `sharedProcess` | [`--shared-process`](#--shared-process) | `true`, `false` or `auto` ([`auto`](#--shared-process-auto)) |
+| `workers` | [`--workers`](#--workers-n) | number |
+| `confirmKills` | [`--confirm-kills`](#failures-caused-by-state-left-behind) | `auto`, `all`, `full`, `restore` |
+| `failUnder` | [`--fail-under`](reports.md#gates-and-exit-codes) | number |
+| `failOnSurvived` | [`--fail-on-survived`](reports.md#gates-and-exit-codes) | `true` / `false` |
+| `baselineReport` | [`--baseline-report`](reports.md#gates-and-exit-codes) | path |
+| `stopWhenGateDecided` | [`--stop-when-gate-decided`](reports.md#gates-and-exit-codes) | `true` / `false` |
+| `timeLimit` | [`--time-limit`](#interrupting-and-resuming) | string (`45m`) |
+| `maxMutants` | [`--max-mutants`](ci.md#keeping-a-run-inside-a-time-budget) | number |
+| `reporter` | [`--reporter`](reports.md) | string or list |
+| `report` | [`--report`](reports.md) | string or list (`json:out/m.json`) |
+| `workDir` | [`--work-dir`](#options) | path |
+
+- A value is turned into its option and read by the same parser as the command line, so it is checked the same way, and it is part of what `--resume` compares.
+- Values are read with the types of JSON (YAML 1.2): only `true` and `false` are booleans, only decimal numbers are numbers, and anything else without quotes is a string. `yes`, `no`, `on` and `off` are strings, so `failOnSurvived: yes` stops the run (YAML 1.1 would have read it as true); `timeLimit: 3h` is a string, while `timeLimit: 90` is a number and stops the run with a hint to write `"90"`. A key that is there twice, a merge key (`<<`), a number out of range and a tag other than the standard ones stop the run. A key whose children are all commented out (`run:` alone) counts as empty.
+- The run prints which keys came from the file and from where (`settings from xcmutate.yml: scheme=App (config), sharedProcess=auto (profile pr)`), and the JSON report keeps it as `settings`.
+- An unknown key raises a warning (kind `config`); a value of the wrong type, or a profile that does not exist, stops the run with exit code 64. The messages end with a link to this section.
+- The path keys (`packageCache`, `impactMap`, `writeImpactMap`, `baselineReport`, `workDir`) are relative to the directory of the config file, wherever the run is started from, and a leading `~/` is the home directory. (On the command line, paths are relative to the current directory.)
+- `--no-recheck-survivors`, `--trust-shared-survivors` and `--confirm-kills none`, which make verdicts weaker, cannot be set in the file (`confirmKills: none` stops the run with exit code 64). They can be given on the command line. Neither can `--prepare`, which runs a shell command: a file in the repository cannot make the tool run one ([SECURITY.md](../SECURITY.md)).
+- In the action: `profile: pr`. The action's inputs are options on the command line, so they win over the profile.
+- The tool reads `xcmutate.yml` or `xcmutate.yaml` at the root. `xcmutate.config.json`, the JSON file of versions up to 0.14, is still read, with the same keys; there, keys that start with `_` are explanations and are not read. When more than one of the three is at the root, the tool stops with exit code 64 and names them. With a YAML file and `xcmutate.config.json`, `xcmutate init --force` moves the settings of the JSON file into the YAML file and removes it; with two YAML files, keep one. `--config <path>` reads a path that ends in `.json` as JSON and any other as YAML.
+
 ### What a run does
 
 1. It selects files and makes mutants. The files are the ones given as arguments, or else the Swift files known to git minus tests, generated code and the `exclude` patterns ([configuration.md](configuration.md#which-files-are-mutated)). With `--since <ref>`, only mutants on lines changed since `git merge-base <ref> HEAD` are kept. Uncommitted changes and untracked files count as changed.
@@ -105,7 +165,7 @@ Which mutants:
 | `--exclude <pattern>` | File pattern to exclude, in addition to the config file (repeatable) |
 | `--arid <pattern>`, `--disable-operator <name>`, `--enable-operator <name>` | Added to what the config file says (repeatable) |
 | `--max-switches-per-expression <n>` | Default 12, or the config file |
-| `--config <path>` | Config file. Default: `<root>/xcmutate.config.json` |
+| `--config <path>` | Config file. Default: `<root>/xcmutate.yml` (or `xcmutate.config.json` of versions up to 0.14). A path that ends in `.json` is read as JSON, any other as YAML |
 | `--accepted <path>` | Accepted mutants file. Default: `<root>/xcmutate.accepted.json` |
 | `--max-mutants <n>` | Examine at most `n` mutants, chosen by their stable keys. The score and the gates are those of the sample ([ci.md](ci.md#keeping-a-run-inside-a-time-budget)) |
 
@@ -125,12 +185,15 @@ Execution:
 | `--shared-process` | Run several mutants in one test process ([Running faster](#running-faster)). Off by default. `--shared-process auto`: only when the baseline's times say that it saves time for the number of mutants |
 | `--trust-shared-survivors` | With `--shared-process`: report a mutant whose tests passed in a shared process as Survived without the run in a new process. Can report survivors that a clean process kills |
 | `--no-direct-launch` | With `--shared-process`: let `xcodebuild` start every test process |
+| `--select-tests impact`, `--impact-map <file>`, `--write-impact-map <file>` | Choose the tests from an impact map that an earlier run wrote ([Choosing the tests from an earlier run](#choosing-the-tests-from-an-earlier-run---select-tests-impact)) |
+| `--no-stop-at-first-failure` | With `--shared-process`: run a mutant that runs by itself against all selected tests to the end under `xcodebuild`, not in the driver stopped at its first failing test ([Running faster](#running-faster)) |
 | `--no-narrow-gate` | With `--shared-process` and `--select-tests reach`: run all selected tests in both runs without mutants at the start of a shared process, not only the mutants' suites in the second |
 | `--workers <n>` | Number of destinations that run mutants at the same time ([Running faster](#running-faster)). Default: the number of `--destination` options |
 | `--reuse` | Do not run mutants that an earlier run found Killed, while nothing that the result rests on has changed ([Reusing results](#reusing-results)). Off by default |
-| `--confirm-kills auto\|all\|none\|full` | How far the tool goes to make sure that a failing run is caused by the mutant ([Failures caused by state left behind](#failures-caused-by-state-left-behind)). Default `auto` |
+| `--confirm-kills auto\|all\|full\|restore\|none` | How far the tool goes to make sure that a failing run is caused by the mutant ([Failures caused by state left behind](#failures-caused-by-state-left-behind)). Default `auto` |
 | `--timeout-factor <x>` / `--timeout-constant <seconds>` | [Timeouts](#timeouts). Defaults 3 and 30 |
 | `--max-rebuilds <n>` / `--max-bisect-builds <n>` | Limits for compile-error handling. Defaults 5 and 16 |
+| `--stop-when-gate-decided` | Stop as soon as the result of the gates can no longer change ([reports.md](reports.md#gates-and-exit-codes)). Needs a gate |
 | `--resume`, `--time-limit <duration>` | [Interrupting and resuming](#interrupting-and-resuming). A duration is `90s`, `45m`, `2h` or `1h30m`; a bare number is seconds |
 | `--keep-results` | Keep the `.xcresult` bundle of every mutant |
 | `--no-caffeinate` | Do not keep the Mac awake |
@@ -197,6 +260,17 @@ State of another suite can also work the other way and hide a mutant from the te
 
 A failure of narrowed tests is a detection only if those suites pass by themselves. A suite can pass in a run of all tests and fail when only it is run, because an earlier suite sets something up for it. So the first time a combination of suites fails with a mutant, the tool runs it once by itself without mutants. If it fails there too, the suites are named in a `dependentTests` warning and the mutants that they reach are run against all selected tests.
 
+
+#### Choosing the tests from an earlier run: `--select-tests impact`
+
+With a long test run, every run of all selected tests in a run costs that time again: the baseline, the first run at the start of a shared process, the mutants that run alone against all tests, the recheck of survivors and the final baseline. `--select-tests impact` makes the selection itself small, from what an earlier run recorded.
+
+1. A run of whole files (a nightly run on the main branch) with `--select-tests reach --write-impact-map impact.json` writes, for every mutated file, the suites whose tests evaluated a switch in it, and the commit.
+2. A later run with `--select-tests impact --impact-map impact.json` takes the files changed since that commit (committed, uncommitted and untracked) and selects the suites that the map gives for them, and the suites declared in changed test files (also ones that the map does not know yet). Then it runs as with `--select-tests reach`, on that selection: its own baseline, narrowing, rechecks and final baseline.
+
+The whole selection runs instead, and the warning `impactFallback` says why, when a changed file is not a Swift file (resources, storyboards, project settings; documentation and `.github/` do not count), is not in the map (a new file, or one without mutants when the map was made), has code that ran outside the tests (app launch) or was reached by a suite that cannot be named for certain, is a test helper that declares no tests, or declares tests outside a type; and when the map cannot be read or its commit is not an ancestor of `HEAD`.
+
+Only the choice of tests comes from the map. Every verdict comes from the run's own runs, so the map cannot give a wrong Killed. The results hold among the selected suites, as with `--only-testing`, and the warning `impactSelection` says so: a test outside them may still reach or detect a mutant. A suite is in the map for a file when it evaluated a switch in that file. One that runs only lines of the file without mutants is not, and neither is one that reads a value that code of the file stored (the reasons for the recheck in [What narrowing assumes](#selecting-tests)). Keep the full run as the reference, and make a new map regularly.
 ### Running faster
 
 [speed.md](speed.md) has the measurements and says when each option helps. [how-it-works.md](how-it-works.md#several-mutants-in-one-process---shared-process) explains the mechanism of the shared process. This section says what the options do.
@@ -223,7 +297,11 @@ The tool compiles a small driver and starts your test host with it. Nothing is a
 | The tests did not end in time after another mutant's passing run | The mutant becomes the first one of the next shared process. A run that does not end there is a Timeout |
 | Crash, a different number of tests, no evaluation as active, tests that still fail after the mutant is switched off | Run under `xcodebuild`, in a separate process |
 
-A Crash is therefore always the verdict of a run under `xcodebuild`. The progress line says where each verdict came from (`shared process 1`, `new process`, `alone`, `alone: <reason>`), and the report has `sharedProcess` and `directLaunch` per result.
+A Crash is therefore always the verdict of a run under `xcodebuild`.
+
+A mutant that has to run by itself against all selected tests (its switch is evaluated before the tests start or unequally often, the tests that reach it are not known, or nothing is narrowed) runs in a process with the tool's driver, with the mutant on from the start, and the run stops at its first failing test. Up to that test it is the run of all tests in the driver's order, which the first run without mutants of every shared process has shown to pass, so the failure is the same evidence of a Killed as in a run to the end (the switch evaluated as active, the tests passed without mutants on the destination since the last run that did not pass). A run of all tests that passes is a Survived as before. Whatever else happens (a crash, a hang, another number of tests) goes to a run under `xcodebuild` to the end. Such a Killed says so in its detail ("the run of all selected tests was stopped at its first failing test (312 of 6904 tests had run)"), carries `stoppedAtFirstFailure: true` in the JSON report, and is counted in the text report and in the time breakdown. On an app whose tests take 15 minutes, this is what such a mutant costs when it is detected early. It is not done when the `.xctestrun` file asks for the tests in random order (`TestExecutionOrdering`; the warning `randomTestOrder` says so), with several unit-test targets or test-plan configurations, or with `--no-stop-at-first-failure`.
+
+The progress line says where each verdict came from (`shared process 1`, `new process`, `alone`, `alone: <reason>`), and the report has `sharedProcess` and `directLaunch` per result.
 
 With several unit-test targets or test-plan configurations, each unit gets its own shared process, and every mutant goes through each unit. A mutant is Killed if its tests fail in one unit. It is a candidate survivor if its tests pass in every unit whose tests evaluate its switch.
 
@@ -255,7 +333,7 @@ xcmutate run … --destination 'id=<UDID>' --workers 2                      # th
 ```
 
 - With repeated `--destination`, nothing is created or deleted.
-- With one simulator and `--workers <n>`, the tool creates `n − 1` simulators of the same device type and runtime, named `xcmutate-<pid>-w<n>`, boots them, and deletes them at the end, also after Ctrl-C. If a run dies without cleaning up, the next `run --workers` and `xcmutate clean` delete worker simulators whose process no longer exists.
+- With one simulator and `--workers <n>`, the tool creates `n − 1` simulators of the same device type and runtime, named `xcmutate-<pid>-w<n>`, boots them, gives them the privacy settings that the first simulator has for the app under test (read from its privacy database: what it allows is granted, what it denies is revoked), and deletes them at the end, also after Ctrl-C. What `simctl privacy` cannot set (the camera, a limited access, the location) is named in the warning `workerPrivacy`; a permission dialog on a worker can stop shared processes there. A destination by name (`platform=iOS Simulator,name=…`) must name one simulator on the Mac; otherwise the run stops before the build and lists the matching ones. If a run dies without cleaning up, the next `run --workers` and `xcmutate clean` delete worker simulators whose process no longer exists.
 - On `platform=macOS` the workers share the destination, and their test processes can fail each other (a port, a lock file). So every mutant that is detected while they run side by side is run again alone at the end, and that run decides (`sharedDestination`). `--workers` saves time there only on mutants that survive.
 - The build and the baseline run once, on the first destination. Every other worker first runs the tests once without mutants. A worker where that fails is not used (`workerDropped`).
 - A Timeout seen while several workers are running is run again alone after the workers are done.
@@ -302,6 +380,9 @@ A failure is therefore attributed to the mutant only when every test of the muta
 | `all` | As `auto`, and a failing run that came after another mutant's passing run is repeated after a run without mutants; it must fail again | Every failing run is repeated | What workers detect while running side by side is always run again alone at the end |
 | `none` | A failing run counts as it is | The failing run and the run without the mutant after it | n/a |
 | `full` | As `auto`, and with `--select-tests reach` a mutant that its narrowed tests detect is run once more against all selected tests ([Selecting tests](#selecting-tests)) | The same | The same |
+| `restore` | As `auto`, but the run without mutants after a run that did not pass is replaced by putting the destination back (below) | The same, for the runs before a new shared process | As `auto` (one worker only) |
+
+`--confirm-kills restore` is for an iOS simulator with app-hosted unit tests and one worker. Right before the baseline, the tool installs the host app and takes a copy (APFS clones) of the app's data container, its App Group containers and the simulator's keychain. After a run that did not pass, it stops the app and the simulator's preferences and keychain daemons, and puts the copy back instead of running the tests without mutants; the pasteboard's text is put back too. Then it compares what the copy does not cover with the state at the copy: the keychain by access group, the pasteboard, the app's privacy permissions, its notifications, the App Groups of other apps that are not Apple's, and the number of records in Photos, Contacts and Calendar. When any of them differs, or putting back fails, the tests are run without mutants as with `auto`; the warning `restoreFellBack` counts such cases with their reasons. The mode assumes that the tests depend on nothing outside the simulator (a server, a file on the Mac) and give the same result from the same state; choose it only when that holds. It also puts back the keychain of the whole simulator, so use a simulator that serves only these tests. On macOS, for tests without a host app, and with several workers it is not used (warning `restoreUnavailable`), and the runs are made as with `auto`. The final baseline and the recheck of survivors are not replaced. `durations.confirmation` has `restoredStates` and `restoreFallbacks`.
 
 A mutant whose tests are narrowed needs a run without mutants of its own suites only, and suites that have already passed since the last failing run are not run again. State that fails a test outside the next mutant's suites is noticed later: when a mutant with that test comes up, or by the run of all selected tests after the last mutant. It is never counted as a detection.
 
@@ -371,9 +452,41 @@ The work copy contains what git tracks plus untracked files that are not ignored
 - After each mutant the observation (exit code, test summary, activation record, duration) is appended to the journal and synced. Verdicts are recomputed from observations whenever the journal is read.
 - Ctrl-C, SIGTERM or SIGHUP stops the child processes, writes the reports for what has finished and exits with 130. The report has `interrupted: true` and the keys that were not run in `pendingKeys`. A second Ctrl-C exits at once.
 - `--time-limit <duration>` does the same when the time is up, counted from the start of the run. The report also has `timeLimitReached: true` and a `timeLimit` warning. The exit code is 0 without a gate. With a gate it is the code of a gate that the results so far already fail, and otherwise 7. If the time is up during the build or the baseline, there is no report and the exit code is 2.
+- `--stop-when-gate-decided` does the same when the result of the requested gates can no longer change. The report has `gateDecidedEarly: true`, `gateDecision` and a `gateDecided` warning, and the exit code is the gate's result.
 - `--resume` with the same options skips the recorded mutants and runs the rest. The build and the baseline are repeated. The time limit is not compared, so a run that the limit cut short can be continued with another limit, or none.
-- `--resume` is refused (exit code 2), with a message that says what changed, when the tool version, the repository state (HEAD, uncommitted changes, contents of untracked files), the list of mutants, the baseline's test count, or an option that decides results has changed. Those options are the `xcodebuild` arguments, `--prepare`, the timeouts, `--select-tests`, `--no-recheck-survivors`, `--max-mutants`, `--shared-process` (and `auto`), `--trust-shared-survivors`, `--no-direct-launch`, `--no-narrow-gate`, `--workers` and the destinations, `--confirm-kills`, `--reuse` and `--copy-scope`. Changes to files that git ignores, and the Xcode version, are not covered.
+- `--resume` is refused (exit code 2), with a message that says what changed, when the tool version, the repository state (HEAD, uncommitted changes, contents of untracked files), the list of mutants, the baseline's test count, or an option that decides results has changed. Those options are the `xcodebuild` arguments, `--prepare`, the timeouts, `--select-tests`, `--no-recheck-survivors`, `--max-mutants`, `--shared-process` (and `auto`), `--trust-shared-survivors`, `--no-direct-launch`, `--no-narrow-gate`, `--no-stop-at-first-failure`, `--workers` and the destinations, `--confirm-kills`, `--reuse` and `--copy-scope`. Changes to files that git ignores, and the Xcode version, are not covered.
 - `run` takes a lock on its work directory. A second run with the same work directory stops with exit code 2 and names the process that holds it. Give parallel runs of one checkout a `--work-dir` each.
+
+## init
+
+`xcmutate init` finds out how the project is built and tested, tries it, and writes the run options into `xcmutate.yml` ([the keys](#run-options-in-the-config-file-run-and-profiles)).
+
+```bash
+xcmutate init                                   # a package: tests on macOS
+xcmutate init --destination 'id=<SIMULATOR-UDID>' --scheme App
+xcmutate init --yes --dry-run                   # print the file; take defaults instead of stopping at open choices
+xcmutate init --path Sources/Cart               # take the sample of the trials from the files below Sources/Cart
+```
+
+1. It finds the workspace, project or package at the top of the repository and its scheme (with several schemes it stops and lists them, unless `--yes` takes the one named after the project), the default branch, and the cores and memory of the Mac.
+2. It builds for testing and reads the `.xctestrun` file: the unit-test targets (UI test targets are left out with `onlyTesting`), the test-plan configurations (with several, the first is chosen with `onlyTestConfiguration`), whether the tests are hosted by an app, whether they run in random order.
+3. It runs a sample of mutants (`--sample`, default 10) twice with `run`: in the default mode, and with `--select-tests reach --shared-process` (and `--confirm-kills restore` for app-hosted tests on a simulator). The sample is taken from the Swift files given as arguments, else from those below `--path <directory>`, else from those below the current directory when it is inside the repository (tests, generated code and the `exclude` patterns left out), and only from the root from the whole repository. A run that does not pass without mutants stops `init` with the reason. On a simulator the trials use one of their own, created like the given one with its privacy settings for the app under test (as the worker simulators of `--workers` get them), and deleted at the end.
+4. It writes a `run` object (container, scheme, destination, test targets, and `buildArg`, `packageCache` and `workDir` when they were given to `init`) and two profiles: `pr` (`since` the default branch, `selectTests: reach`, `sharedProcess: auto` and `confirmKills: restore` when the trial allowed them) and `nightly` (`selectTests: reach`, `sharedProcess`, `writeImpactMap`, `timeLimit`, `workers` by the cores and memory). Each choice has its reason in a comment above it, and a comment says roughly how long a pull request with 50 mutants takes after the build: the time per mutant run, for the share of the sample's mutants that were run, plus what does not grow with the number of mutants (the baseline, the final baseline, the runs without mutants at the start of a shared process).
+
+- The destination of a simulator is written by its name and OS version (`platform=iOS Simulator,name=…,OS=…`), which other Macs can resolve, unless another simulator has the same name and version; then it is the UDID.
+- `workers` is written only when the privacy settings of the simulator could be given to another simulator (read from its privacy database; a camera permission, for one, cannot be set with `simctl privacy`).
+- The impact map goes outside what git tracks and outside any work directory (`clean` removes those): `.build/xcmutate/impact.json` when git ignores `.build`, else `~/Library/Caches/xcmutate/impact-<repository>-<hash of its path>.json`. A map inside the tracked tree would make the working tree dirty.
+- Paths given to `init` (`--package-cache`, `--work-dir`) are written relative to the directory of the config file, unless they were given as absolute or from `~/`.
+- The trials work in the temporary directory, or in the `--work-dir` given, which `init` locks as a run does. When `init` stops on a failure, it removes its builds and copies and keeps only the logs that the message names; a full disk is said as such, with the free space. The next `init` removes what an earlier one left, and the simulators of trials that were killed.
+
+A faster mode is written only when its trial gave the same verdicts as the default mode for every mutant of the sample, was faster per mutant run (the runs without mutants at the start of a shared process left out; `sharedProcess: auto` weighs them against the number of mutants of each run), and no warning said that it could not be used. `init` never writes an option that makes verdicts weaker (`--no-recheck-survivors`, `--trust-shared-survivors`, `--confirm-kills none`) and never a gate; the `pr` profile carries examples as commented-out keys.
+
+The file it writes:
+
+- It starts with comments that link to the description of its keys (for the version that wrote it).
+- An existing `xcmutate.yml` keeps its other keys and its comments. When it already has `run` or `profiles`, `init` writes nothing, shows what it would write and ends with exit code 1; `--force` replaces those two keys. (A file in flow style, `{…}`, cannot be edited by lines; it is then written anew from its values, without its comments, and `init` says so.)
+- When `xcmutate.config.json` of an earlier version is at the root (alone, or beside the YAML file, or with `--config` naming a YAML file), `init` writes nothing, shows the YAML file it would write, and ends with exit code 1. That file holds the settings of the JSON file that the YAML file does not have, its `_` explanations as comments, and the run options of `init` in place of the JSON file's `run` and `profiles` (the message names them). With `--force` it writes the YAML file and removes `xcmutate.config.json` (git still has it), so that the root has one config file. `--config xcmutate.config.json` keeps writing JSON instead, with the reasons under `_why`.
+- Writing again replaces what `init` wrote before: the header, the paragraph with the estimate, `run` and `profiles`.
 
 ## accept
 

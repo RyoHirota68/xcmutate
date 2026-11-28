@@ -39,6 +39,8 @@ enum SharedProcess {
         var configurationName: String?
         /// The test host with its placeholders written out: the app that hosts the tests, or the `xctest` agent.
         var hostPath = ""
+        /// The `.xctestrun` file asks for the tests in random order (`TestExecutionOrdering` = `random`).
+        var randomOrder = false
         var hostBundleIdentifier: String?
         var isAppHosted = false
         /// Arguments of the test process (a test-plan configuration's language and region arrive this way).
@@ -120,6 +122,7 @@ enum SharedProcess {
                                   bundlePath: bundlePath, only: only, skip: skip, configurationName: group.configuration)
                 unit.hostPath = host
                 unit.hostBundleIdentifier = target["TestHostBundleIdentifier"] as? String
+                unit.randomOrder = (target["TestExecutionOrdering"] as? String)?.lowercased() == "random"
                 unit.isAppHosted = target["IsAppHostedTestBundle"] as? Bool ?? (host.hasSuffix(".app"))
                 unit.commandLineArguments = Self.hostArguments(target["CommandLineArguments"] as? [String] ?? [],
                                                                language: target["TestLanguage"] as? String, region: target["TestRegion"] as? String)
@@ -791,7 +794,42 @@ enum SharedProcess {
         var exitCode: Int32?
         /// What the driver was doing when the process ended or ran out of time (`launch`, `control 1`, …).
         var lastPhase = ""
+        /// A host started by the tool went to the background and stayed there (`BackgroundWatch`): the process was
+        /// stopped then, without waiting for its time limit (`ending` is `.exited`).
+        var stoppedInBackground = false
     }
+
+    /// Watches the driver's notes about a host that the tool started for the app going out of the front and staying
+    /// there. Such a host is suspended (and ended by the system when a background task of the app has not finished
+    /// after about 30 seconds, code 0x2182bad2); a suspended host runs no test, so it does not come back by itself.
+    /// Waiting for the time limit of the phase cost about five minutes each time on an app whose tests open a URL.
+    struct BackgroundWatch {
+        /// How long the app may stay out of the front before the process is stopped (a test that sends the app to the
+        /// background and brings it back within this time is not affected).
+        var grace: Double
+        private var seen = 0
+        private var since: Date?
+
+        init(grace: Double) { self.grace = grace }
+
+        /// True once the last note says "background" and no note has come since, for `grace` seconds.
+        mutating func stalled(_ changes: [Events.AppState], now: Date) -> Bool {
+            guard let last = changes.last, last.state == "background" else {
+                since = nil
+                seen = changes.count
+                return false
+            }
+            guard let since, changes.count == seen else {
+                seen = changes.count
+                self.since = now
+                return false
+            }
+            return now.timeIntervalSince(since) >= grace
+        }
+    }
+
+    /// `BackgroundWatch.grace` for the processes that the tool starts (a variable for the tests).
+    nonisolated(unsafe) static var backgroundGrace: Double = 10
 
     /// The command and the environment of a host that the tool starts itself. Values are written only for the
     /// variables that the tool sets or that decide what is loaded; of the others (the project's own, from the scheme
@@ -906,6 +944,27 @@ enum SharedProcess {
         return nil
     }
 
+    /// The lines of a host's output that say why it ended, for a warning: the lines of `xctest` (`Usage:`, `Failure:`),
+    /// of the dynamic loader (`Library not loaded`, `Symbol not found`, its `Reason:`), and of an uncaught exception
+    /// or a Swift trap, in order, at most three. `xctest` that cannot load a bundle writes its arguments and its whole
+    /// environment after the reason ("Displaying process arguments and environment for debugging purposes"); that part
+    /// is left out, so that the last lines are not a list of variables. `chosen` is false when no such line was found
+    /// and the lines are simply the last ones.
+    static func hostReason(inOutput output: String) -> (lines: [String], chosen: Bool) {
+        var text = Substring(output)
+        if let range = text.range(of: "Displaying process arguments and environment") { text = text[..<range.lowerBound] }
+        let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let markers = ["Failure:", "Usage: xctest", "Library not loaded", "Symbol not found", "Reason:", "image not found",
+                       "Terminating app", "Fatal error:", "Precondition failed:", "dyld[", "dyld:", "The bundle", "couldn't be loaded"]
+        let chosen = lines.filter { line in markers.contains { line.contains($0) } }
+        if !chosen.isEmpty {
+            // The reason of xctest first: its usage line says nothing that the failure does not
+            let ordered = chosen.filter { !$0.hasPrefix("Usage: xctest") } + chosen.filter { $0.hasPrefix("Usage: xctest") }
+            return (ordered.prefix(3).map { String($0.prefix(240)) }, true)
+        }
+        return (lines.suffix(3).map { String($0.prefix(200)) }, false)
+    }
+
     /// What the driver's notes say when the app was out of the front at the end; nil if it was not.
     static func backgroundCause(_ changes: [Events.AppState]) -> String? {
         guard let last = changes.last, last.state == "background" else { return nil }
@@ -925,9 +984,8 @@ enum SharedProcess {
             try? fm.copyItem(at: sessionDirectory.appendingPathComponent(file), to: kept.appendingPathComponent(file))
         }
         let output = (try? String(contentsOf: kept.appendingPathComponent("host.log"), encoding: .utf8)) ?? ""
-        let last = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.suffix(3)
-            .map { String($0.prefix(200)) }
-        let tail = last.isEmpty ? "the host wrote nothing" : "last output of the host: " + last.joined(separator: " | ")
+        let said = hostReason(inOutput: output)
+        let tail = said.lines.isEmpty ? "The host wrote nothing." : (said.chosen ? "What the host said: " : "The last lines the host wrote: ") + said.lines.joined(separator: " | ") + "."
         var events = Events()
         for line in ((try? String(contentsOf: kept.appendingPathComponent("events.log"), encoding: .utf8)) ?? "").split(separator: "\n") {
             events.consume(String(line))
@@ -977,7 +1035,7 @@ enum SharedProcess {
             }
             exit = " How the process ended, from the simulator's log: \(exitReason(in: lines) ?? lines[lines.count - 1])."
         }
-        return (kept, "Kept for inspection in \(kept.path): host.log (output of the host), launch.txt (the command, the environment, how the process ended, crash reports), events.log (what the driver reported), tests.log (the tests that started, in order).\(lastTest)\(exit)\(crash) \(tail)\(cause.isEmpty || tail.hasSuffix(".") ? "" : ".")\(cause)")
+        return (kept, "\(tail)\(cause)\(lastTest)\(exit)\(crash) To see more: the first lines of \(kept.appendingPathComponent("host.log").path) (what the host wrote), and launch.txt beside it (the command, the environment, how the process ended, crash reports); events.log has what the driver reported, tests.log the tests that started.")
     }
 
     /// The lines that SpringBoard and runningboardd wrote about a process that exited, from the system log of a
@@ -1185,6 +1243,7 @@ enum SharedProcess {
         }
         var exited = false
         var failure: Error?
+        var background = BackgroundWatch(grace: Self.backgroundGrace)
         while true {
             if readEvents() {
                 do { try onProgress(result.events) } catch { failure = error; break }
@@ -1193,6 +1252,12 @@ enum SharedProcess {
             if result.events.relaunched { result.ending = .exited; break }
             if exited { result.ending = .exited; break }
             if InterruptState.isInterrupted { result.ending = .interrupted; break }
+            // A host started by the tool that stays out of the front is suspended: it will not finish its tests
+            if launcher == .direct, background.stalled(result.events.appStates, now: Date()) {
+                result.ending = .exited
+                result.stoppedInBackground = true
+                break
+            }
             let now = currentPhase()
             if now.name != phase {
                 phase = now.name
@@ -1219,7 +1284,7 @@ enum SharedProcess {
         process.kill()
         if let pid = result.events.processID { Darwin.kill(pid, SIGKILL) }
         if let simulatorApp {
-            if result.events.processID == nil || result.ending == .timedOut {
+            if result.events.processID == nil || result.ending == .timedOut || result.stoppedInBackground {
                 _ = try? Subprocess.capture(["/usr/bin/xcrun", "simctl", "terminate", simulatorApp.udid, simulatorApp.bundleIdentifier], timeout: 30, ignoresInterrupt: true)
             }
         } else if launcher == .xcodebuild, result.ending == .timedOut || result.events.processID == nil {
@@ -1263,7 +1328,9 @@ enum SharedProcess {
             }
             // A host started by the tool that ended out of the front was ended by the system, not by a mutant
             // (`backgroundCause`); the next one would end the same way. The mutant that was on is run again.
-            if result.unusable == nil, launcher == .direct, result.ending == .exited, let last = events.appStates.last, last.state == "background" {
+            if result.stoppedInBackground {
+                result.unusable = "the app went to the background and stayed there for \(Int(Self.backgroundGrace))s, where a host started by the tool is suspended and runs no test; the process was stopped then instead of at its time limit (\(String(format: "%.1f", result.duration))s after the start) (log: \(log.path))"
+            } else if result.unusable == nil, launcher == .direct, result.ending == .exited, let last = events.appStates.last, last.state == "background" {
                 result.unusable = "the test process ended while the app was in the background (\(exitDescription(result.exitCode, viaSimctl: simulatorApp != nil)), \(String(format: "%.1f", result.duration))s after the start) (log: \(log.path))"
             }
             if case .session = mode, case .full = gate, events.classesWritten,

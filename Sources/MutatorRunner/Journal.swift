@@ -54,6 +54,11 @@ public struct MutantObservation: Codable, Sendable, Equatable {
     /// it says. The host had crashed and `xcodebuild` had not said so yet (seen once, on a busy machine: a mutant
     /// that calls `fatalError` was a Timeout). With it the run is a crash (`crashedIn` is set too), not a Timeout.
     public var crashEvidence: String?
+    /// True when the run was against all selected tests in a process with the tool's driver, stopped at its first
+    /// failing test (`--shared-process`, unless `--no-stop-at-first-failure`). The summary then counts the tests that
+    /// ran up to that test. The tests run in the order of the driver, which the first run without mutants of every
+    /// shared process has shown to pass.
+    public var stoppedAtFirstFailure: Bool?
 
     /// What the run is compared with when the observation is read again; nil if the observation does not say.
     var recordedEvidence: BaselineEvidence? {

@@ -51,7 +51,7 @@ To update, `git pull`, build again and copy the file again.
 This too needs a tagged release. Each release carries `xcmutate-<version>-macos-universal.tar.gz` and a `.sha256` file:
 
 ```bash
-VERSION=0.14.0
+VERSION=0.15.0
 curl -fsSLO "https://github.com/RyoHirota68/xcmutate/releases/download/v$VERSION/xcmutate-$VERSION-macos-universal.tar.gz"
 curl -fsSLO "https://github.com/RyoHirota68/xcmutate/releases/download/v$VERSION/xcmutate-$VERSION-macos-universal.tar.gz.sha256"
 shasum -a 256 -c "xcmutate-$VERSION-macos-universal.tar.gz.sha256"

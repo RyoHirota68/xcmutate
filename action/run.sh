@@ -50,6 +50,8 @@ if [[ "${INPUT_SHARED_PROCESS:-false}" == "auto" ]]; then arguments+=(--shared-p
 if [[ -n "${INPUT_BASELINE_REPORT:-}" ]]; then arguments+=(--baseline-report "$INPUT_BASELINE_REPORT"); fi
 if [[ -n "${INPUT_FAIL_UNDER:-}" ]]; then arguments+=(--fail-under "$INPUT_FAIL_UNDER"); fi
 if [[ "${INPUT_FAIL_ON_SURVIVED:-false}" == "true" ]]; then arguments+=(--fail-on-survived); fi
+if [[ "${INPUT_STOP_WHEN_GATE_DECIDED:-false}" == "true" ]]; then arguments+=(--stop-when-gate-decided); fi
+if [[ -n "${INPUT_PROFILE:-}" ]]; then arguments+=(--profile "$INPUT_PROFILE"); fi
 if [[ -n "${INPUT_MAX_MUTANTS:-}" ]]; then arguments+=(--max-mutants "$INPUT_MAX_MUTANTS"); fi
 if [[ -n "${INPUT_TIME_LIMIT:-}" ]]; then arguments+=(--time-limit "$INPUT_TIME_LIMIT"); fi
 if [[ -n "${INPUT_WORK_DIR:-}" ]]; then arguments+=(--work-dir "$INPUT_WORK_DIR"); fi

@@ -17,7 +17,7 @@ struct XCMutate: ParsableCommand {
         Documentation: \(Documentation.url)/getting-started.md
         """,
         version: ToolInfo.version,
-        subcommands: [Run.self, List.self, Accept.self, Clean.self, AgentGuideCommand.self, Instrument.self]
+        subcommands: [Run.self, List.self, InitCommand.self, Accept.self, Clean.self, AgentGuideCommand.self, Instrument.self]
     )
 
     /// As the default `main`, except for an error that a command raises while it runs (a file that does not exist,
@@ -27,7 +27,7 @@ struct XCMutate: ParsableCommand {
     static func main() {
         var command: ParsableCommand
         do {
-            command = try parseAsRoot(rewrittenArguments(Array(CommandLine.arguments.dropFirst())))
+            command = try parseAsRoot(try withProfile(rewrittenArguments(Array(CommandLine.arguments.dropFirst()))))
         } catch {
             exit(withError: error)
         }
@@ -42,7 +42,41 @@ struct XCMutate: ParsableCommand {
     }
 }
 
+/// The run options that came from the config file (`RunProfile`), for the record of the run.
+nonisolated(unsafe) var profileExpansion = RunProfile.Expansion()
+
 extension XCMutate {
+    /// `run`: the run options of the config file (its `run` object and the profile named by `--profile`) put in front of
+    /// the command line's, which therefore win. Other commands are left as they are.
+    static func withProfile(_ arguments: [String]) throws -> [String] {
+        // The help is shown whatever the config file holds
+        guard arguments.first == "run", !arguments.contains("--help"), !arguments.contains("-h") else { return arguments }
+        func value(of option: String) -> String? {
+            for (index, argument) in arguments.enumerated() {
+                if argument == "--" { break }
+                if argument == option, index + 1 < arguments.count { return arguments[index + 1] }
+                if argument.hasPrefix(option + "=") { return String(argument.dropFirst(option.count + 1)) }
+            }
+            return nil
+        }
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let root: URL
+        if let given = value(of: "--root") {
+            root = URL(fileURLWithPath: given, relativeTo: cwd).standardizedFileURL
+        } else if let top = try? GitDiff.git(["rev-parse", "--show-toplevel"]).trimmingCharacters(in: .whitespacesAndNewlines), !top.isEmpty {
+            root = URL(fileURLWithPath: top)
+        } else {
+            root = cwd
+        }
+        let config = try configFile(given: value(of: "--config"), root: root, cwd: cwd)
+        do {
+            profileExpansion = try RunProfile.expand(configAt: config, profile: value(of: "--profile"), given: arguments)
+        } catch let failure as RunProfile.Failure {
+            throw ValidationError(failure.description)
+        }
+        return ["run"] + profileExpansion.arguments + arguments.dropFirst()
+    }
+
     /// `--shared-process auto` and `--shared-process=auto` become `--shared-process-auto`: a flag cannot take a value,
     /// and `--shared-process` alone keeps its meaning.
     static func rewrittenArguments(_ arguments: [String]) -> [String] {
@@ -77,6 +111,17 @@ func warn(_ message: String) {
     FileHandle.standardError.write(Data("\(ToolInfo.name): warning: \(message)\n".utf8))
 }
 
+/// The config file: the one given with --config (relative to `cwd` when given), else the one at the root
+/// (`ConfigFile.locate`: `xcmutate.yml`, or `xcmutate.config.json` of earlier versions; two of them stop the command).
+func configFile(given: String?, root: URL, cwd: URL?) throws -> URL {
+    if let given { return cwd.map { URL(fileURLWithPath: given, relativeTo: $0).standardizedFileURL } ?? URL(fileURLWithPath: given) }
+    do {
+        return try ConfigFile.locate(root: root)
+    } catch let ambiguous as ConfigFile.Ambiguous {
+        throw ValidationError(ambiguous.description)
+    }
+}
+
 /// Reads the config file and prints warnings such as unknown keys to standard error.
 func loadConfig(_ url: URL) throws -> MutatorConfig {
     do {
@@ -107,14 +152,14 @@ struct CommonOptions: ParsableArguments {
     @Option(help: "Operator that is off by default to enable (repeatable), in addition to \(MutatorConfig.defaultName).")
     var enableOperator: [String] = []
 
-    @Option(help: "Config file (default: <root>/\(MutatorConfig.defaultName)).")
+    @Option(help: "Config file (default: <root>/\(MutatorConfig.defaultName), or \(ConfigFile.jsonName) of versions up to 0.14). A path ending in .json is read as JSON, any other as YAML.")
     var config: String?
 
     @Argument(help: "Swift files to look at. list: may be left out with --since (the changed files that run would mutate are taken).")
     var files: [String] = []
 
     func generatorOptions() throws -> GeneratorOptions {
-        let url = config.map { URL(fileURLWithPath: $0) } ?? rootURL.appendingPathComponent(MutatorConfig.defaultName)
+        let url = try configFile(given: config, root: rootURL, cwd: nil)
         return try loadConfig(url).generatorOptions(extraArid: arid, extraDisabled: disableOperator, maxSwitches: maxSwitchesPerExpression, extraEnabled: enableOperator)
     }
 
@@ -158,7 +203,7 @@ struct CommonOptions: ParsableArguments {
             guard let since, let changed else {
                 throw ValidationError("Name the Swift files to look at, or give --since <ref> to take the files that changed since that commit.")
             }
-            let configURL = config.map { URL(fileURLWithPath: $0) } ?? rootURL.appendingPathComponent(MutatorConfig.defaultName)
+            let configURL = try configFile(given: config, root: rootURL, cwd: nil)
             var selection: FileSelector.Selection
             do {
                 selection = try WorkCopyFiles.select(root: rootURL, patterns: try loadConfig(configURL).exclude ?? [])
@@ -605,7 +650,7 @@ struct SpeedOptions: ParsableArguments {
     @Flag(name: .customLong("shared-process-auto"), help: .hidden)
     var sharedProcessAuto = false
 
-    @Option(help: "Which tests each mutant runs: none (all of them, the default), reach (only the suites that execute the mutated code, found in the baseline) or auto (tests named after the mutated file, Foo.swift -> FooTests). Use reach when one run of all tests takes more than a few seconds.")
+    @Option(help: "Which tests each mutant runs: none (all of them, the default), reach (only the suites that execute the mutated code, found in the baseline) auto (tests named after the mutated file, Foo.swift -> FooTests) or impact (the suites that an impact map of an earlier run says ran the files changed since, then as reach; needs --impact-map). Use reach when one run of all tests takes more than a few seconds.")
     var selectTests: TestSelectionMode = .none
 
     @Option(help: "Number of destinations that run mutants at the same time. Default: the number of --destination options. If it is larger and the first destination is a simulator, the tool creates the missing simulators (\(SimulatorWorkers.namePrefix)<pid>-w<n>) and deletes them at the end.")
@@ -613,6 +658,9 @@ struct SpeedOptions: ParsableArguments {
 
     @Flag(help: "Skip mutants that an earlier run with --reuse in the same work directory found Killed, as long as nothing their result rests on has changed. Reused results are marked in the report; a run without the option remains the reference.")
     var reuse = false
+
+    @Flag(name: .customLong("no-stop-at-first-failure"), help: "With --shared-process: run a mutant that runs by itself against all selected tests to the end under xcodebuild. By default such a run goes to the tool's driver and stops at its first failing test, which is enough for Killed.")
+    var noStopAtFirstFailure = false
 
     @Flag(name: .customLong("no-narrow-gate"), help: "With --shared-process and --select-tests reach: make both runs without mutants at the start of a shared process of all selected tests. By default the second runs only the suites that the process's mutants reach.")
     var noNarrowGate = false
@@ -623,7 +671,7 @@ struct SpeedOptions: ParsableArguments {
 
 /// `run`: the options under the heading "How verdicts are checked" of its help.
 struct VerdictOptions: ParsableArguments {
-    @Option(help: "How a failing run is confirmed as the mutant's effect and not that of state an earlier run left behind: auto (the default), all (repeat more failing runs), full (with --select-tests reach, also run every detected mutant against all tests: one more run per detected mutant) or none (no confirmation: a failing run counts as it is, which can report mutants as Killed that are not).")
+    @Option(help: "How a failing run is confirmed as the mutant's effect and not that of state an earlier run left behind: auto (the default), all (repeat more failing runs), full (with --select-tests reach, also run every detected mutant against all tests: one more run per detected mutant), restore (as auto, but on an iOS simulator the run without mutants after a failing run is replaced by putting back a copy of the app's containers and the keychain taken before the baseline; it assumes tests that depend on nothing outside the simulator) or none (no confirmation: a failing run counts as it is, which can report mutants as Killed that are not).")
     var confirmKills: KillConfirmation = .auto
 
     @Flag(inversion: .prefixedNo, help: "With --select-tests reach: run a mutant that passes the tests that reach it once more against all tests before it is reported as Survived (on by default). --no-recheck-survivors skips that run: faster, but a mutant that only a test of another suite would catch is then reported as Survived (marked `narrowedOnly`).")
@@ -653,6 +701,12 @@ struct ReportOptions: ParsableArguments {
     @Option(help: "Path of the JSON report. Same as --report json:<path>.")
     var jsonOutput: String?
 
+    @Option(help: "With --select-tests reach: write which suites ran the code of which file (an impact map, JSON) for later runs with --select-tests impact. Meant for a nightly run of whole files on the main branch.")
+    var writeImpactMap: String?
+
+    @Option(help: "With --select-tests impact: the impact map of an earlier run (--write-impact-map). The run selects the suites that ran the files changed since the map's commit, and the suites of changed test files; the results hold among those suites.")
+    var impactMap: String?
+
     @Option(help: "Write the progress of the run to this file while it runs, one JSON object per line: phases, a heartbeat when nothing else happens for a minute, each mutant's result with the time left, and the exit code at the end. A program or a coding agent can follow it (docs/reports.md). With --resume the lines are appended.")
     var progressFile: String?
 
@@ -661,6 +715,9 @@ struct ReportOptions: ParsableArguments {
 
     @Option(help: "Exit with status 4 if the mutation score in percent is below this value.")
     var failUnder: Double?
+
+    @Flag(help: "Stop as soon as the result of the gates (--fail-on-survived, --fail-under, --baseline-report) can no longer change, whatever the mutants still to come give. The report covers what was run and says so; the exit code is the gate's. --resume can go on.")
+    var stopWhenGateDecided = false
 
     @Option(name: [.customLong("baseline-report"), .customLong("baseline")],
 help: "JSON report of an earlier run (for example of the main branch). Exit with status 5 if a mutant is undetected now and was not undetected then: \"no new gaps\".")
@@ -687,8 +744,11 @@ struct OtherOptions: ParsableArguments {
     @Option(help: "What is copied into the work directory: git-root (the whole repository, so that references to files outside --root still resolve) or root (only --root).")
     var copyScope: CopyScope = .gitRoot
 
-    @Option(help: "Config file (default: <root>/\(MutatorConfig.defaultName)).")
+    @Option(help: "Config file (default: <root>/\(MutatorConfig.defaultName), or \(ConfigFile.jsonName) of versions up to 0.14). A path ending in .json is read as JSON, any other as YAML.")
     var config: String?
+
+    @Option(help: "Use the run options of this profile of the config file (`profiles.<name>`), on top of its `run` options. Options on the command line win. The keys: \(ConfigFile.runOptionsDocumentation)")
+    var profile: String?
 
     @Option(help: "Turn a mutation operator off (repeatable). Adds to \(MutatorConfig.defaultName).")
     var disableOperator: [String] = []
@@ -813,9 +873,17 @@ struct Run: ParsableCommand {
         if let workers, workers < destination.count { throw ValidationError("--workers (\(workers)) is smaller than the number of --destination options (\(destination.count)).") }
         if trustSharedSurvivors, !sharedProcess { throw ValidationError("--trust-shared-survivors needs --shared-process.") }
         if noDirectLaunch, !sharedProcess { throw ValidationError("--no-direct-launch needs --shared-process.") }
-        if speed.noNarrowGate, !sharedProcess || selectTests != .reach { throw ValidationError("--no-narrow-gate needs --shared-process and --select-tests reach.") }
-        if let recheckSurvivors, selectTests != .reach { throw ValidationError("--\(recheckSurvivors ? "" : "no-")recheck-survivors needs --select-tests reach.") }
+        if speed.noStopAtFirstFailure, !sharedProcess { throw ValidationError("--no-stop-at-first-failure needs --shared-process.") }
+        if speed.noNarrowGate, !sharedProcess || !selectTests.narrowsByReach { throw ValidationError("--no-narrow-gate needs --shared-process and --select-tests reach.") }
+        if let recheckSurvivors, !selectTests.narrowsByReach { throw ValidationError("--\(recheckSurvivors ? "" : "no-")recheck-survivors needs --select-tests reach.") }
         _ = try reportOutputs(workURL: URL(fileURLWithPath: "/"), cwd: URL(fileURLWithPath: "/"))
+        if selectTests == .impact, reports.impactMap == nil { throw ValidationError("--select-tests impact needs --impact-map <file> (written by an earlier run with --write-impact-map).") }
+        if reports.impactMap != nil, selectTests != .impact { throw ValidationError("--impact-map needs --select-tests impact.") }
+        if selectTests == .impact, !onlyTesting.isEmpty { throw ValidationError("--select-tests impact chooses the tests itself; leave out --only-testing (use --skip-testing to leave tests out).") }
+        if reports.writeImpactMap != nil, selectTests != .reach { throw ValidationError("--write-impact-map needs --select-tests reach (the per-test record of the baseline).") }
+        if reports.stopWhenGateDecided, !failOnSurvived, failUnder == nil, reports.baselineReport == nil {
+            throw ValidationError("--stop-when-gate-decided needs a gate: --fail-on-survived, --fail-under or --baseline-report.")
+        }
         if let failUnder, !(0...100).contains(failUnder) { throw ValidationError("--fail-under takes a percentage between 0 and 100.") }
         if let maxMutants, maxMutants < 1 { throw ValidationError("--max-mutants takes a number of 1 or more.") }
         if let timeLimit, TimeLimit.parse(timeLimit) == nil { throw ValidationError("--time-limit takes a duration such as 90s, 45m, 2h or 1h30m (a bare number is seconds), got \(timeLimit).") }
@@ -918,9 +986,13 @@ struct Run: ParsableCommand {
             return String(absolute.dropFirst(canonicalRoot.count))
         }
 
-        let configURL = config.map { URL(fileURLWithPath: $0, relativeTo: cwd) } ?? rootURL.appendingPathComponent(MutatorConfig.defaultName)
+        let configURL = try configFile(given: config, root: rootURL, cwd: cwd)
         let mutatorConfig = try loadConfig(configURL)
-        var initialWarnings = mutatorConfig.loadWarnings.map { RunWarning(kind: "config", message: $0) }
+        var initialWarnings = (mutatorConfig.loadWarnings + profileExpansion.warnings).map { RunWarning(kind: "config", message: $0) }
+        if !profileExpansion.sources.isEmpty || !profileExpansion.overridden.isEmpty {
+            let used = profileExpansion.sources.keys.sorted().map { "\($0)=\(profileExpansion.values[$0] ?? "") (\(profileExpansion.sources[$0] ?? ""))" }
+            FileHandle.standardError.write(Data("\(ToolInfo.name): settings from \(URL(fileURLWithPath: profileExpansion.file ?? "").lastPathComponent): \(used.isEmpty ? "none" : used.joined(separator: ", "))\(profileExpansion.overridden.isEmpty ? "" : "; the command line replaced \(profileExpansion.overridden.joined(separator: ", "))")\n".utf8))
+        }
         var excluded = RunReport.Excluded()
 
         var changed: [String: [ClosedRange<Int>]]?
@@ -1061,21 +1133,31 @@ struct Run: ParsableCommand {
         OperatorDeclarationSources.apply(to: &config.generatorOptions, root: rootURL,
                                          extraFiles: targetFiles.map { rootURL.appendingPathComponent($0).path })
         config.selectTestsAutomatically = selectTests == .auto
-        config.selectTestsByReach = selectTests == .reach
+        config.selectTestsByReach = selectTests.narrowsByReach
+        config.impactMap = reports.impactMap.map { URL(fileURLWithPath: $0, relativeTo: cwd).standardizedFileURL }
+        config.writeImpactMap = reports.writeImpactMap.map { URL(fileURLWithPath: $0, relativeTo: cwd).standardizedFileURL }
         config.maxBisectBuilds = maxBisectBuilds
         config.packageCache = packageCache.map { URL(fileURLWithPath: $0, relativeTo: cwd).standardizedFileURL }
         let acceptedURL = accepted.map { URL(fileURLWithPath: $0, relativeTo: cwd) } ?? rootURL.appendingPathComponent(AcceptedFile.defaultName)
         config.accepted = try AcceptedFile.load(acceptedURL)
         config.copyRoot = layout.copyRoot
         config.resume = resume
+        if !profileExpansion.sources.isEmpty || !profileExpansion.overridden.isEmpty {
+            config.settings = RunReport.Settings(file: profileExpansion.file, profile: profileExpansion.profile,
+                                                 fromFile: Dictionary(uniqueKeysWithValues: profileExpansion.sources.map { key, source in
+                                                     (key, RunReport.Settings.Setting(value: profileExpansion.values[key] ?? "", source: source))
+                                                 }),
+                                                 overriddenByCommandLine: profileExpansion.overridden)
+        }
         config.sharedProcess = speed.sharedProcess && !speed.sharedProcessAuto
         config.sharedProcessAuto = speed.sharedProcessAuto
         config.trustSharedSurvivors = trustSharedSurvivors
         config.directLaunch = !noDirectLaunch
         config.narrowGate = !speed.noNarrowGate
+        config.stopAtFirstFailure = !speed.noStopAtFirstFailure
         config.reuse = reuse
         config.confirmKills = confirmKills
-        config.recheckSurvivors = selectTests == .reach && (recheckSurvivors ?? true)
+        config.recheckSurvivors = selectTests.narrowsByReach && (recheckSurvivors ?? true)
         config.filesWereGiven = !files.isEmpty
         config.maxMutants = maxMutants
         config.timeLimit = timeLimit.flatMap(TimeLimit.parse)
@@ -1107,6 +1189,7 @@ struct Run: ParsableCommand {
             }
         }
 
+        if reports.stopWhenGateDecided { config.stopWhenGateDecided = gate }
         InterruptHandler.install()
         if !noCaffeinate { SleepPrevention.start() }
         let runReport: RunReport
@@ -1173,7 +1256,8 @@ struct Run: ParsableCommand {
 
         // Exit code
         // A run that --time-limit cut short ends like a run that finished: the limit is a budget, not a failure
-        if runReport.interrupted, runReport.timeLimitReached != true { throw ExitCode(ExitCodes.interrupted) }
+        // A run cut short because the gate's result was decided ends with that result, like a run that finished
+        if runReport.interrupted, runReport.timeLimitReached != true, runReport.gateDecidedEarly != true { throw ExitCode(ExitCodes.interrupted) }
         // Files with undetected mutants that the earlier report did not examine. Two cases that must not be mixed up:
         // the file existed then and that run was limited to other files (not known to the baseline, not new), or it
         // did not exist then (new code: its gaps are new gaps). Which one is asked of git, at the commit of the
@@ -1237,7 +1321,105 @@ enum WorkCopyFiles {
 extension KillConfirmation: ExpressibleByArgument {}
 
 enum TestSelectionMode: String, ExpressibleByArgument {
-    case auto, reach, none
+    case auto, reach, impact, none
+
+    /// Mutants are narrowed to the suites that reached them (`impact` chooses the selection first, then narrows the same way).
+    var narrowsByReach: Bool { self == .reach || self == .impact }
+}
+
+/// `init`: tries the project and writes the run options of the config file (`ProjectSetup`).
+struct InitCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "init",
+        abstract: "Try the project and write the run options of \(MutatorConfig.defaultName): a `run` object and the profiles pr and nightly.",
+        discussion: """
+        Finds the workspace, project or package and its scheme, builds for testing, leaves out UI test targets and extra \
+        test-plan configurations, and runs a sample of mutants twice: in the default mode and with the faster modes \
+        (--select-tests reach --shared-process, and --confirm-kills restore for app-hosted tests on a simulator). A faster \
+        mode is chosen only when it gave the same verdicts and was faster per mutant. Options that make verdicts weaker \
+        and gates are never chosen. The reasons are printed and kept in the file as comments. The sample is taken from the \
+        files given, --path, or the current directory below the root. Trials on a simulator use a simulator of their \
+        own, created like the booted one with its privacy settings for the app, and deleted at the end.
+        """
+    )
+
+    @Option(help: "The repository (default: the top level of the git repository of the current directory).")
+    var root: String?
+    @Option(help: "Xcode workspace (default: the one at the top of the repository).")
+    var workspace: String?
+    @Option(help: "Xcode project.")
+    var project: String?
+    @Option(help: "Swift package directory.")
+    var package: String?
+    @Option(help: "Scheme (default: the only one, or with --yes the one named after the project).")
+    var scheme: String?
+    @Option(help: "Destination (default: macOS for a package, the booted iOS simulator for a project).")
+    var destination: String?
+    @Option(help: "Config file to write (default: <root>/\(MutatorConfig.defaultName)). A path ending in .json is written as JSON, with the reasons under `_why`.")
+    var config: String?
+    @Argument(help: "Swift files (relative to the current directory) that the trials mutate: the sample is taken from them. Default: the files below --path, or below the current directory when it is inside the repository, else the whole repository.")
+    var files: [String] = []
+    @Option(help: "A directory whose Swift files the trials mutate (tests, generated code and the exclude patterns left out).")
+    var path: String?
+    @Option(parsing: .singleValue, help: "Extra argument for the build (repeatable; write it as --build-arg=-quiet). Used for the trials and written into `run`.")
+    var buildArg: [String] = []
+    @Option(help: "A SourcePackages directory to copy before the build (as with run). Used for the trials and written into `run`.")
+    var packageCache: String?
+    @Option(help: "Work directory for the trials, written into `run` for later runs. Default: the trials work in the temporary directory, and runs in their default work directory.")
+    var workDir: String?
+    @Option(help: "Mutants in each trial.")
+    var sample: Int = 10
+    @Flag(help: "Print the file instead of writing it.")
+    var dryRun = false
+    @Flag(help: "Do not stop where a choice is open (several schemes): take the default and say so. For CI and coding agents.")
+    var yes = false
+    @Flag(help: "Replace the run options of an existing config file (its other keys are kept). With \(ConfigFile.jsonName) of an earlier version at the root: write its settings into \(MutatorConfig.defaultName) and remove it.")
+    var force = false
+
+    func run() throws {
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let rootURL: URL
+        if let root {
+            rootURL = URL(fileURLWithPath: root, relativeTo: cwd).standardizedFileURL
+        } else if let top = try? GitDiff.git(["rev-parse", "--show-toplevel"]).trimmingCharacters(in: .whitespacesAndNewlines), !top.isEmpty {
+            rootURL = URL(fileURLWithPath: top)
+        } else {
+            rootURL = cwd
+        }
+        // Where init writes, and the JSON file of an earlier version that it moves there
+        let targets: (target: URL, legacy: URL?)
+        do {
+            targets = try ProjectSetup.targets(given: config.map { URL(fileURLWithPath: $0, relativeTo: cwd).standardizedFileURL }, root: rootURL)
+        } catch let ambiguous as ConfigFile.Ambiguous {
+            throw ValidationError(ambiguous.description)
+        }
+        let file = targets.target
+        let executable = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
+        var options = ProjectSetup.Options(root: rootURL, configFile: file, executable: executable, cwd: cwd)
+        options.files = files
+        options.legacyConfig = targets.legacy
+        options.path = path
+        options.buildArguments = buildArg
+        options.packageCache = packageCache
+        options.workDir = workDir
+        options.workspace = workspace
+        options.project = project
+        options.package = package
+        options.scheme = scheme
+        options.destination = destination
+        options.dryRun = dryRun
+        options.yes = yes
+        options.force = force
+        options.sample = max(sample, 1)
+        InterruptHandler.install()
+        do {
+            let code = try ProjectSetup.perform(options) { FileHandle.standardError.write(Data("\(ToolInfo.name): \($0)\n".utf8)) }
+            if code != 0 { throw ExitCode(code) }
+        } catch let failure as ProjectSetup.Failure {
+            FileHandle.standardError.write(Data("\(ToolInfo.name): init: \(failure.description)\n".utf8))
+            throw ExitCode(ExitCodes.infrastructure)
+        }
+    }
 }
 
 struct Accept: ParsableCommand {
@@ -1421,7 +1603,10 @@ struct Clean: ParsableCommand {
                 total -= entry.sizeBytes
                 continue
             }
-            if !dryRun { try FileManager.default.removeItem(at: entry.url) }
+            if !dryRun {
+                try FileManager.default.removeItem(at: entry.url)
+                PackageLockFiles.remove(derivedData: entry.url.appendingPathComponent("DerivedData"))
+            }
         }
         let removed = entries.count - skippedBusy
         print("\(dryRun ? "would free" : "freed") about \(WorkDirectoryInfo.formatSize(total)) in \(removed) director\(removed == 1 ? "y" : "ies")")

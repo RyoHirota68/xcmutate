@@ -55,12 +55,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0           # the diff against the base branch needs its history
-      - uses: RyoHirota68/xcmutate@v0.14.0   # a released version; the tag must exist
+      - uses: RyoHirota68/xcmutate@v0.15.0   # a released version; the tag must exist
         with:
           workspace: App.xcworkspace
           scheme: App
           destination: platform=iOS Simulator,name=iPhone 16
           fail-on-survived: true
+          stop-when-gate-decided: true   # stop at the first gap: the job fails either way
 ```
 
 In a `pull_request` event the action mutates only the lines that the pull request changes (`--since origin/<base branch>`); in other events it mutates whole files unless you set `since`.
@@ -77,10 +78,12 @@ In a `pull_request` event the action mutates only the lines that the pull reques
 | `baseline-report` | JSON report of an earlier run: fail only for mutants that are undetected now and were not then | none |
 | `fail-under` | Fail when the score in percent is below this | none |
 | `fail-on-survived` | `true`: fail when a mutant is not detected | `false` |
+| `profile` | A profile of the config file `xcmutate.yml` (`--profile`); the inputs given here win over it | none |
+| `stop-when-gate-decided` | `true`: stop as soon as the result of the gates can no longer change (`--stop-when-gate-decided`); the report covers what was run | `false` |
 | `max-mutants` | Examine at most this many mutants ([below](#keeping-a-run-inside-a-time-budget)) | none |
 | `time-limit` | Stop after this time and report what was run, e.g. `45m` | none |
 | `args` | Further arguments for `xcmutate run`, one per line. An option and its value are two arguments: two lines | none |
-| `version` | A release such as `0.14.0` or `v0.14.0`, or `source`. A release that is named and cannot be downloaded fails the step | the release of the action's tag; the sources when the action is used by branch or commit |
+| `version` | A release such as `0.15.0` or `v0.15.0`, or `source`. A release that is named and cannot be downloaded fails the step | the release of the action's tag; the sources when the action is used by branch or commit |
 | `work-dir` | Work directory of the run | a directory under the runner's temporary directory |
 | `package-cache` | A `SourcePackages` directory to seed the build with ([Caching](#caching)) | none |
 | `report-directory` | Where `mutation.json`, `mutation.md`, `mutation.html` and `progress.jsonl` (the progress of the run, [reports.md](reports.md#the-progress-file)) go; they are uploaded together | `mutation-report` |
@@ -92,7 +95,7 @@ Outputs: `exit-code`, `score` (0 to 1), `undetected` (the number of Survived and
 
 **How the tool gets there.**
 
-- For a release (`uses: …@v0.14.0`, or `version: 0.14.0`) the action downloads `xcmutate-<version>-macos-universal.tar.gz` from the release and checks its SHA-256.
+- For a release (`uses: …@v0.15.0`, or `version: 0.15.0`) the action downloads `xcmutate-<version>-macos-universal.tar.gz` from the release and checks its SHA-256.
 - When the action is used by a branch or a commit, or with `version: source`, it builds the tool from the sources of the action's checkout with `swift build -c release`. That takes several minutes and needs Swift 6.3 or newer on the runner. If the runner's Swift is older, the action stops before the build and says why.
 - If the download fails, the result depends on where the version came from. A version named in `version` fails the step, because the job would otherwise run another version than the one it asked for. A version taken from the action's tag is built from the sources of that tag instead, with a notice.
 - The executable is cached with `actions/cache`, keyed by the version, or by a hash of the sources and the Swift version. A cached executable whose `--version` is not the one asked for is not used.
@@ -189,7 +192,7 @@ In the order in which they should be tried:
 - Projects that generate their Xcode project need `--prepare 'xcodegen generate'` (or the equivalent); the command runs in the work copy. With the action, pass it through `args` (`--prepare` on one line, the command on the next).
 - Files that git ignores are not in the work copy. Create them in `--prepare` ([usage.md](usage.md#when-the-build-cannot-find-a-file)).
 - Accepted mutants (`xcmutate.accepted.json`, committed in your repository) do not count as undetected, so a gate does not fail for them.
-- **Pin the version** (`@v0.14.0`, not a branch), so that results do not change under you.
+- **Pin the version** (`@v0.15.0`, not a branch), so that results do not change under you.
 - Xcode build phase instead of CI: `--reporter xcode` prints survivors as warnings that Xcode shows on the source lines.
 
 ## A large app
@@ -197,6 +200,7 @@ In the order in which they should be tried:
 What the measurements in [speed.md](speed.md) say for an app whose unit tests take a minute or more. The numbers there come from a fixture with 1,105 tests (31 s) and from runs on a production app with about 7,000 tests (90 to 100 s). None of those runs was made in CI. They show the conditions under which a run was fast on a developer's Mac, and are not a promise for a hosted runner.
 
 - Pull requests: `--since`, `--select-tests reach`, `--shared-process`. With a long test run, the time per mutant is the time of the tests that run for it. `reach` runs, for each mutant, the suites that execute it; it needs `--shared-process` to narrow code that a single test covers.
+- Choose the tests from the nightly run: the nightly run (whole files, `select-tests: reach`) adds `--write-impact-map impact.json` through `args` and uploads the file; the pull-request run downloads it and uses `--select-tests impact --impact-map impact.json` through `args`. Every run of all tests in the pull-request run (the baseline, the first run of a shared process, the runs alone against all tests, the rechecks, the final baseline) is then a run of the suites that ran the changed files. The results hold among those suites, the nightly run stays the reference, and the run says when it had to run all tests ([usage.md](usage.md#choosing-the-tests-from-an-earlier-run---select-tests-impact)). With 15 minutes for all tests and 45 tests for the changed file, a run of all tests in the pull request becomes about a minute; the build is then the largest part.
 - Budget for the survivors. With `reach`, a mutant that passes the tests that reach it is run once more against all tests before it is reported as Survived ([usage.md](usage.md#selecting-tests) says why). Each such mutant costs one run of all tests. On the fixture with 1,105 tests, 75 mutants took 495 s without that run and 954 s with it, for 12 survivors. On a diff the survivors are few; in a nightly run over many files they are the larger part of the time. `--no-recheck-survivors` removes the cost and marks those survivors as "not run against all tests"; use it only when you accept that such a survivor may be one that all tests would have killed.
 - A test plan for mutation runs: one configuration, unit tests only. Every configuration multiplies the runs; a UI test target in the scheme is built every time, and a selection that contains one is not served by `--shared-process`. Select the unit-test targets with `--only-testing`.
 - A time limit below the job's timeout, so that a slow night ends with a report (`time-limit`).
@@ -208,7 +212,7 @@ What the measurements in [speed.md](speed.md) say for an app whose unit tests ta
 
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) builds the tool and runs its unit tests (`swift build`, `swift test`) on a macOS runner. The unit tests need no simulator. [`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the release archive for a tag ([install.md](install.md)). [`.github/workflows/smoke.yml`](../.github/workflows/smoke.yml), also started by hand, runs the action once on the smallest fixture package and compares the verdicts with the expected ones. Its purpose is to show whether a run works with the Xcode of the runner image. It has been run once and passed (above).
 
-`ci.yml` runs on pushes to `main`, on pull requests, and when started by hand (`workflow_dispatch`): the "Run workflow" button on the Actions tab, or `gh workflow run ci.yml`. Pushes run it only in `RyoHirota68/xcmutate`, not in forks. `release.yml` starts when a tag `v<version>` is pushed. For `v0.13.0` it ran on 2026-11-24 on the standard image (Xcode 26.6): the unit tests, the universal archive and its checks, and the release, in 19 minutes.
+`ci.yml` runs on pushes to `main`, on pull requests, and when started by hand (`workflow_dispatch`): the "Run workflow" button on the Actions tab, or `gh workflow run ci.yml`. Pushes run it only in `RyoHirota68/xcmutate`, not in forks. `release.yml` starts when a tag `v<version>` is pushed. For `v0.13.0` it ran on 2026-11-24 on the standard image (Xcode 26.6): the unit tests, the universal archive and its checks, and the release, in 19 minutes. For `v0.14.0` on 2026-11-26 the same, in 19 minutes.
 
 `Package.swift` declares Swift tools version 6.3. On 2026-11-24 the workflow passed on GitHub's standard macOS image (`macos-26-arm64`, Xcode 26.6, Swift 6.3.3): `swift build` and 332 tests. The runner label and the Xcode version are inputs, so that they can be changed without editing the workflow:
 

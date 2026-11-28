@@ -44,7 +44,7 @@ jobs:
             echo "::warning::No baseline report was found (no successful run of nightly.yml on main, or no artifact mutation-baseline). This run fails for every undetected mutant on the changed lines instead of only for new ones."
           fi
 
-      - uses: RyoHirota68/xcmutate@v0.14.0
+      - uses: RyoHirota68/xcmutate@v0.15.0
         with:
           workspace: App.xcworkspace
           scheme: App
@@ -55,6 +55,7 @@ jobs:
           baseline-report: ${{ hashFiles('baseline/mutation.json') != '' && 'baseline/mutation.json' || '' }}
           fail-on-survived: ${{ hashFiles('baseline/mutation.json') == '' }}   # without a baseline: any undetected mutant on the changed lines
           time-limit: 45m
+          stop-when-gate-decided: true   # the job's result is known at the first new gap; the report covers what was run
           package-cache: ${{ runner.temp }}/SourcePackages
           args: |
             --only-testing

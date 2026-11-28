@@ -2,7 +2,7 @@
 #
 #   - uses: actions/checkout@v5
 #     with: { fetch-depth: 0 }
-#   - uses: RyoHirota68/xcmutate@v0.14.0
+#   - uses: RyoHirota68/xcmutate@v0.15.0
 #     with:
 #       workspace: App.xcworkspace
 #       scheme: App
@@ -69,6 +69,12 @@ inputs:
   fail-on-survived:
     description: "true: fail (exit code 3) when a mutant is not detected."
     default: "false"
+  profile:
+    description: "A profile of the config file xcmutate.yml (--profile): its run options, under the inputs given here."
+    default: ""
+  stop-when-gate-decided:
+    description: "true: stop as soon as the result of the gates (fail-on-survived, fail-under, baseline-report) can no longer change (--stop-when-gate-decided). The report covers the mutants that were run."
+    default: "false"
   max-mutants:
     description: "Run at most this many mutants, chosen by their stable keys (--max-mutants)."
     default: ""
@@ -82,7 +88,7 @@ inputs:
     default: ""
   version:
     description: >-
-      Version of the tool: a release such as 0.14.0 (its binary is downloaded), or "source" (built from the
+      Version of the tool: a release such as 0.15.0 (its binary is downloaded), or "source" (built from the
       sources of the action's own ref and cached). Empty: the release of the action's ref when that is a tag
       v<version>, the sources otherwise.
     default: ""
@@ -173,6 +179,8 @@ runs:
         INPUT_BASELINE_REPORT: ${{ inputs.baseline-report }}
         INPUT_FAIL_UNDER: ${{ inputs.fail-under }}
         INPUT_FAIL_ON_SURVIVED: ${{ inputs.fail-on-survived }}
+        INPUT_STOP_WHEN_GATE_DECIDED: ${{ inputs.stop-when-gate-decided }}
+        INPUT_PROFILE: ${{ inputs.profile }}
         INPUT_MAX_MUTANTS: ${{ inputs.max-mutants }}
         INPUT_TIME_LIMIT: ${{ inputs.time-limit }}
         INPUT_ARGS: ${{ inputs.args }}

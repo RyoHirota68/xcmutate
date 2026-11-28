@@ -1,0 +1,32 @@
+{
+  "comment": "As expected.json, with shared processes and without --no-stop-at-first-failure: the mutants sent back to run alone against all tests are run by the driver and stopped at their first failing test; the two that are detected are Killed that way, with the same verdicts.",
+  "statuses": {
+    "price(_:)::boundary": "Survived",
+    "price(_:)::condition-constant": [
+      "Survived",
+      "Survived"
+    ],
+    "price(_:)::condition-negation": [
+      "Survived",
+      "Survived"
+    ],
+    "price(_:)::return-value": [
+      "NotReached",
+      "Killed"
+    ],
+    "price(_:)::ternary-swap": "Killed"
+  },
+  "notInSharedProcess": [
+    "price(_:)::boundary",
+    "price(_:)::ternary-swap"
+  ],
+  "noWarnings": [
+    "dependentTests",
+    "stateLeak",
+    "runnerError"
+  ],
+  "stoppedAtFirstFailure": [
+    "price(_:)::return-value",
+    "price(_:)::ternary-swap"
+  ]
+}

@@ -12,17 +12,19 @@ A mutation testing tool can report *Survived* for a mutant that was never really
 |---|---|---|
 | Survived | A record that the mutant was switched on while the tests ran, and a run that executed as many tests as the baseline. Without them the result is an error | Nothing |
 | Killed | The same tests have passed with every mutant off since the last failing run on that destination | `--confirm-kills` (below) |
+| Killed with `--confirm-kills restore` (not the default) | Instead of a run without mutants after a failing run, the app's containers and the simulator's keychain are put back to a copy taken right before the baseline, and what the copy does not cover (keychain by access group, pasteboard, privacy permissions, the app's notifications, other apps' App Groups, the records of Photos, Contacts and Calendar) must equal the copy's; otherwise the tests are run as with `auto`. It rests on two assumptions that are not checked: the tests depend on nothing outside the simulator, and give the same result from the same state | Use `auto` when either assumption does not hold |
 | Survived with `--select-tests reach` | A mutant that passes the suites that execute it is run against all selected tests before it is reported as Survived | `--no-recheck-survivors` skips that run; such survivors are marked in every report and can be false |
 | Killed with `--select-tests reach` | The suites that reach the mutant detect it. The report marks such results (`narrowedOnly`), because state of another suite can hide a mutant in a run of all tests | `--confirm-kills full` also runs them against all selected tests, and that run decides |
 | Any result with `--only-testing` or `--select-tests auto` | The result holds among the selected tests only: a test that was not selected might still reach or detect the mutant. The report states that | Nothing |
 | Survived with `--shared-process` | A mutant whose tests pass in a process that ran several mutants is confirmed in a new process | `--trust-shared-survivors` skips the confirmation |
 | A mutant that could not be judged | It is reported as RunnerError or NotActivated and is not counted. Every report shows the number, and the run ends with exit code 7, with or without a gate | Nothing |
 
-`--confirm-kills` has four levels:
+`--confirm-kills` has five levels:
 
 - `auto` (the default): after a run that did not pass, the next mutant's tests are run once with all mutants off before the mutant. This does not cover state that a *passing* run leaves behind.
 - `all`: as `auto`, and a failure that follows another mutant's passing run is repeated after a run without mutants. It must fail again. This covers state left by a passing run.
 - `full`: as `auto`, and with `--select-tests reach` every mutant that its narrowed tests detect is run once more against all selected tests.
+- `restore`: as `auto`, but on an iOS simulator with app-hosted tests the run without mutants after a failing run is replaced by putting back a copy of the destination (the table above). The final baseline and the run of all tests that rechecks a survivor are still made.
 - `none`: a failing run counts as it is. State left by one mutant can then be reported as a detection of the next.
 
 [usage.md](usage.md#failures-caused-by-state-left-behind) describes the levels for each mode of running, and [usage.md](usage.md#selecting-tests) the test selection.

@@ -18,7 +18,7 @@ xcmutate は、Swift / Xcode プロジェクト向けのミューテーション
 
 XCTest と Swift Testing に対応し、テストは macOS 上か iOS シミュレータ上で実行します。UI テストには対応していません（[必要なもの](#必要なもの)）。
 
-> これは初期の版です（0.14.0。最初のリリースは 0.13.0）。オプションやレポートの形式は、1.0 までに変わることがあります。
+> これは初期の版です（0.15.0。最初のリリースは 0.13.0）。オプションやレポートの形式は、1.0 までに変わることがあります。
 
 ## コードカバレッジでは分からないこと
 
@@ -75,7 +75,7 @@ xcmutate run --package . --scheme <scheme> --destination 'platform=macOS'
 上のパッケージでは、レポートの最後は次のようになります。
 
 ```
-xcmutate 0.14.0: 2 mutants (scope: all)
+xcmutate 0.15.0: 2 mutants (scope: all)
   Killed 1, Survived 1
   …
 Survived / not reached:
@@ -94,6 +94,8 @@ xcrun simctl boot <SIMULATOR-UDID>    # UDID は xcrun simctl list devices で�
 xcmutate run --since origin/main --workspace App.xcworkspace --scheme App \
   --destination 'id=<SIMULATOR-UDID>' --only-testing AppTests
 ```
+
+繰り返し実行するプロジェクトでは、`xcmutate init`（シミュレータなら `--destination` を付けます）が、少数のミュータントを既定の方式と速い方式で試し、設定ファイル `xcmutate.yml` にプロファイルを書きます。それぞれの選択の理由はコメントとして書かれます。試すミュータントは、指定したファイル、`--path <ディレクトリ>`、またはカレントディレクトリから選びます。速い方式は、同じ判定を出し、ミュータント1個あたりの時間が短かったときだけプロファイルに入ります。以降は `xcmutate run --profile pr` だけで実行できます。
 
 複製には、git が無視するファイルは入りません。git が無視するファイル（`Pods`・手元の `.xcconfig`・生成した Xcode プロジェクトなど）がビルドに要る場合は、`--prepare` で複製の中に作ります。たとえば `--prepare 'xcodegen generate'` です（[docs/usage.md](docs/usage.md#when-the-build-cannot-find-a-file)）。
 
@@ -149,7 +151,7 @@ Run Script のビルドフェーズから `--reporter xcode` を呼ぶと、生�
 
 ## どのくらい速いか
 
-ミュータント1個あたりの時間は、それを検出しうるテストを1回実行する時間と、テストのプロセスの起動でほぼ決まります。このため、小さなパッケージと大きなアプリでは桁が1つ違います。下の数値は、条件と一緒に読んでください。版 0.13.0 を、ほかのビルドも動いていた1台の Mac で測ったもので、ほとんどは1回だけの計測です。
+ミュータント1個あたりの時間は、それを検出しうるテストを1回実行する時間と、テストのプロセスの起動でほぼ決まります。このため、小さなパッケージと大きなアプリでは桁が1つ違います。下の数値は、条件と一緒に読んでください。表は版 0.13.0 を、ほかのビルドも動いていた1台の Mac で測ったもので、ほとんどは1回だけの計測です。
 
 | プロジェクト | ミュータント1個ごとに実行するテスト | オプション | ミュータント1個あたりの時間 |
 |---|---|---|---|
@@ -159,9 +161,21 @@ Run Script のビルドフェーズから `--reporter xcode` を呼ぶと、生�
 | | | `--shared-process` | 1.4 秒 |
 | 大きな製品 iOS アプリ（シミュレータ） | 約 1,200 件、約 45 秒 | `--select-tests reach --shared-process` | 22〜24 秒 |
 
+同じ大きなアプリを 0.15.0 でも測りました。対象は 33 個のミュータントで、Mac の負荷が低い時間に、設定ごとに1回ずつ実行しました。時間は実行全体のものです。
+
+| 版 | オプション | 実行全体 |
+|---|---|---:|
+| 0.13.0 | `--select-tests reach --shared-process` | 1,162 秒 |
+| 0.15.0 | `--select-tests reach --shared-process` | 1,147 秒 |
+| 0.15.0 | `--select-tests reach --shared-process --confirm-kills restore` | 984 秒 |
+
+`--confirm-kills restore` では、検出のあとのミュータントなしの実行 12 回のうち 9 回が、シミュレータを元に戻す処理に置き換わりました。この比較の 4 回の実行で、判定は同じでした（Killed 28、Crash 5）。
+
 選択したテストが長いときと、生き残るミュータント・クラッシュさせるミュータント・終わらないミュータントが多いときは遅くなります。大きなアプリ全体を一度に対象にするのは現実的ではありません。`--since`、夜間の実行、`--max-mutants` による抽出を使ってください。計測値と、それぞれのオプションがどういうときに速くなるかは [docs/speed.md](docs/speed.md) にあります。
 
-`--shared-process` は、ミュータントごとにテストを起動し直さず、1つのテストプロセスの中で多くのミュータントを実行します。既定で無効なのは、テストが同じプロセスの中で2回続けて通る必要があるためです。
+`--shared-process` は、ミュータントごとにテストを起動し直さず、1つのテストプロセスの中で多くのミュータントを実行します。既定で無効なのは、テストが同じプロセスの中で2回続けて通る必要があるためです。`--shared-process auto` は、ベースラインの時間から見てミュータントの数に対して速くなるときだけ使います。
+
+テストに何分もかかるアプリでは、全テストを流す段階が時間の大半を占めます。`--select-tests impact` は、夜間の実行が書いた対応表から PR で流すテストを選びます（結果は選んだテストの中での判定になります）。`--stop-when-gate-decided` は、ゲートの結果が決まった時点で CI の実行を止めます。`--confirm-kills restore` は、検出のあとにテストを流す代わりにシミュレータを元の状態に戻します。それぞれの代償と前提は [docs/speed.md](docs/speed.md) にあります。
 
 ## Muter との違い
 
@@ -178,10 +192,10 @@ Swift のミューテーションテストツールとしては [Muter](https://
 | ページ | 内容 |
 |---|---|
 | [Getting started](docs/getting-started.md) | 最初の実行、レポートの読み方、抜けの埋め方 |
-| [Usage reference](docs/usage.md) | すべてのサブコマンド（`run`・`accept`・`clean`・`list`・`instrument`）とオプション、用語集 |
+| [Usage reference](docs/usage.md) | すべてのサブコマンド（`run`・`init`・`accept`・`clean`・`list`・`instrument`）とすべてのオプション、用語集、設定ファイルの項目 |
 | [Limitations](docs/limitations.md) | 対応していないこと、まだ確認できていないこと、既知の問題 |
 | [Reports](docs/reports.md) | 結果の種類、スコア、レポートの形式、警告、ゲートと終了コード |
-| [Configuration](docs/configuration.md) | 設定ファイル、どのファイルを書き換えるか、無効化コメント |
+| [Configuration](docs/configuration.md) | 設定ファイル（`xcmutate.yml`）、どのファイルを書き換えるか、無効化コメント |
 | [Operators](docs/operators.md) | 27 個のミューテーション演算子（既定で有効なのは 19 個）と、既定を決める基準 |
 | [Speed](docs/speed.md) | 計測値と、実行を速くする方法 |
 | [CI](docs/ci.md) | GitHub Action、ワークフローの例、シェルスクリプト、時間の予算 |

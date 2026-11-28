@@ -270,6 +270,67 @@ extension CommandLineTests {
         }
     }
 
+    /// Every key of the config file's run options stands for an option that `run` has (`RunProfile.keys` is the one
+    /// table that ties them together), and a file's value reaches the run unless the command line sets it.
+    @Test(.enabled(if: available)) func everyRunOptionOfTheConfigFileIsAnOptionOfRun() throws {
+        let help = try run(["run", "--help"], in: FileManager.default.temporaryDirectory).output
+        for key in RunProfile.keys {
+            #expect(help.contains(key.option + " ") || help.contains(key.option + ",") || help.contains(key.option + "\n") || key.kind == .sharedProcess && help.contains("--shared-process"), "\(key.name): \(key.option) is not an option of run")
+        }
+        #expect(Set(RunProfile.keys.map(\.name)).count == RunProfile.keys.count)
+        try withTemporaryDirectory { directory in
+            let file = directory.appendingPathComponent("config.json")
+            try #"{"run": {"scheme": "App", "destination": ["id=A", "id=B"], "sharedProcess": "auto", "failUnder": 80, "failOnSurvived": false, "_why": {"scheme": "only one"}}, "profiles": {"pr": {"since": "origin/main", "selectTests": "reach", "scheme": "PR", "typo": 1}}}"#.write(to: file, atomically: true, encoding: .utf8)
+            let common = try RunProfile.expand(configAt: file, profile: nil, given: ["run"])
+            #expect(common.arguments == ["--destination", "id=A", "--destination", "id=B", "--fail-under", "80", "--scheme", "App", "--shared-process-auto"])
+            #expect(common.sources["scheme"] == "config" && common.warnings.isEmpty)
+            // The profile over `run`, the command line over both
+            let profile = try RunProfile.expand(configAt: file, profile: "pr", given: ["run", "--since", "HEAD~1", "--destination=id=C"])
+            #expect(profile.arguments == ["--fail-under", "80", "--scheme", "PR", "--select-tests", "reach", "--shared-process-auto"])
+            #expect(profile.sources["scheme"] == "profile pr" && profile.overridden == ["destination", "since"])
+            #expect(profile.warnings.count == 1 && profile.warnings[0].contains("unknown run option `typo`"))
+            #expect(throws: RunProfile.Failure.self) { try RunProfile.expand(configAt: file, profile: "nightly", given: ["run"]) }
+            try #"{"run": {"workers": "two"}}"#.write(to: file, atomically: true, encoding: .utf8)
+            #expect(throws: RunProfile.Failure.self) { try RunProfile.expand(configAt: file, profile: nil, given: ["run"]) }
+        }
+    }
+
+    /// `"confirmKills": "none"` makes verdicts weaker, so the file cannot hold it (in `run` or in a profile, even when
+    /// the command line sets the option), while `--confirm-kills none` on the command line is still taken.
+    @Test func theConfigFileCannotTurnOffTheConfirmationOfKills() throws {
+        try withTemporaryDirectory { directory in
+            let file = directory.appendingPathComponent("config.json")
+            try #"{"run": {"confirmKills": "none"}}"#.write(to: file, atomically: true, encoding: .utf8)
+            #expect { try RunProfile.expand(configAt: file, profile: nil, given: ["run"]) } throws: { error in
+                (error as? RunProfile.Failure)?.description.contains("--confirm-kills none") == true
+            }
+            #expect(throws: RunProfile.Failure.self) { try RunProfile.expand(configAt: file, profile: nil, given: ["run", "--confirm-kills", "auto"]) }
+            try #"{"run": {"confirmKills": "all"}, "profiles": {"fast": {"confirmKills": "none"}}}"#.write(to: file, atomically: true, encoding: .utf8)
+            #expect(throws: RunProfile.Failure.self) { try RunProfile.expand(configAt: file, profile: "fast", given: ["run"]) }
+            let common = try RunProfile.expand(configAt: file, profile: nil, given: ["run"])
+            #expect(common.arguments == ["--confirm-kills", "all"])
+            let typed = try RunProfile.expand(configAt: file, profile: nil, given: ["run", "--confirm-kills", "none"])
+            #expect(typed.arguments.isEmpty && typed.overridden == ["confirmKills"])
+        }
+    }
+
+    /// The config file at the root decides what `run` reads: two of them (the YAML file and the JSON file of an earlier
+    /// version) stop it with exit code 64 and both paths, a wrong value stops it with a link to the keys, and the help
+    /// is shown whatever the file holds.
+    @Test(.enabled(if: available)) func runFindsOneConfigFileAndShowsItsHelpAnyway() throws {
+        try withTemporaryDirectory { directory in
+            _ = runProcess("/usr/bin/git", ["-C", directory.path, "init", "-q"])
+            try "run:\n  failOnSurvived: yes\n".write(to: directory.appendingPathComponent("xcmutate.yml"), atomically: true, encoding: .utf8)
+            let wrong = try run(["run", "--scheme", "X"], in: directory)
+            #expect(wrong.status == 64 && wrong.output.contains("must be true or false") && wrong.output.contains(ConfigFile.runOptionsDocumentation))
+            let help = try run(["run", "--help"], in: directory)
+            #expect(help.status == 0 && help.output.contains("--profile"))
+            try "{}".write(to: directory.appendingPathComponent("xcmutate.config.json"), atomically: true, encoding: .utf8)
+            let both = try run(["run", "--scheme", "X"], in: directory)
+            #expect(both.status == 64 && both.output.contains("more than one config file") && both.output.contains("xcmutate.config.json"))
+        }
+    }
+
     /// Every `--option` and every subcommand that the guide names exists (read from the help of the executable), so
     /// that an agent following it does not meet "Unknown option".
     @Test(.enabled(if: available)) func theGuideNamesOnlyOptionsAndSubcommandsThatExist() throws {

@@ -16,6 +16,8 @@ expected.json:
   "details":   {"<declaration>::<operator>": ["<text>", ...]}  the detail of every mutant of that key must contain
                one of the texts (for example the limit that stopped a run)
   "maxSeconds": {"<declaration>::<operator>": <seconds>}  no mutant of that key may have taken longer
+  "stoppedAtFirstFailure": [...]  when present: exactly the detected mutants of these must be marked as Killed by a
+               run of all tests that stopped at its first failing test
   "notInSharedProcess": [...]  with --shared-process: no mutant of these may have its verdict from a shared process
                (they must have been sent to a process of their own)
   "exitStatus" is checked by the calling script.
@@ -74,6 +76,10 @@ def main() -> int:
             detail = result.get("detail") or ""
             if not any(text in detail for text in texts):
                 problems.append(f"{result['mutant']['key']}: the detail names none of {texts}: {detail or 'no detail'}")
+    if "stoppedAtFirstFailure" in expected:
+        stopped = sorted(name for name, results in found.items() if any(result.get("stoppedAtFirstFailure") for result in results))
+        if stopped != sorted(expected["stoppedAtFirstFailure"]):
+            problems.append(f"Killed by runs stopped at their first failing test: {stopped}, expected {sorted(expected['stoppedAtFirstFailure'])}")
     if report.get("durations", {}).get("sharedProcess") is not None:
         for name in expected.get("notInSharedProcess", []):
             for result in found.get(name, []):
